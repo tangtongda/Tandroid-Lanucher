@@ -12,4 +12,10 @@ data class AppInfo(
     val label: String,
     val banner: Drawable? = null,
     val icon: Drawable? = null,
+    /** The app declares itself as a video app (ApplicationInfo.CATEGORY_VIDEO). */
+    val isVideo: Boolean = false,
+    /** The app declares itself as a music/audio app (ApplicationInfo.CATEGORY_AUDIO). */
+    val isAudio: Boolean = false,
+    /** Preinstalled system app: can't be uninstalled from the launcher. */
+    val isSystem: Boolean = false,
 )

@@ -70,6 +70,45 @@ UI 参考 tvOS HIG skill，换算到 Android TV。1080p 电视是 xhdpi，屏幕
 
 > Preview 用的是自定义 spec `960dp×540dp @320dpi`，和真机一致。`Devices.TV_1080p` 的宽度是按 1920dp 定义的，用它预览的话，元素看起来会比真机上小一半。
 
+## 首页背景图
+
+每个应用按下面的顺序找自己的背景图，找到就停：
+
+1. **应用自己的数据，或对应品类的榜单**：
+   - B 站：官方热门（无需 key）
+   - YouTube：配置了 `youtube.apiKey` 用官方热门视频，否则用 TMDB 热门剧集 + 热门电影；YouTube Kids 用动画 / 合家欢
+   - 音乐应用（声明 `CATEGORY_AUDIO`，或 Spotify、网易云、QQ 音乐等）：Apple Music 最多播放专辑榜，封面显示在右侧
+2. **TMDB 上属于该平台的内容**：按 TMDB 的「观看平台」筛选，例如 Netflix 只显示 Netflix 上的剧
+3. **TMDB 本周热门**：只给视频类应用（应用声明了 `CATEGORY_VIDEO`，或 Plex / Kodi / Jellyfin）
+4. **都没有**：显示应用自己的横幅图或图标主色（Play 商店、设置、工具类应用）
+
+焦点停留时每 12 秒换一张。日志可在 Logcat 里搜 `Backdrops` 查看。
+
+`local.properties` 配置（文件已被 git 忽略）：
+
+```properties
+tmdb.token=eyJhbGciOi...          # TMDB API Read Access Token（必填）
+tmdb.region=HK                    # 可选：匹配观看平台用的地区，默认 HK
+youtube.apiKey=AIza...            # 可选：YouTube Data API v3
+# tmdb.apiBase=https://your-proxy.example.com/3/      可选：反向代理
+# tmdb.imageBase=https://your-proxy.example.com/t/p/
+```
+
+> 本产品使用 TMDB API，但未获得 TMDB 的认可或认证。显示 TMDB 图片时界面会附带来源说明。
+
+## 天气
+
+导航栏右侧显示当前天气，数据来自 [Open-Meteo](https://open-meteo.com)（免费、无需 key，数据按 CC BY 4.0 授权：Weather data by Open-Meteo.com）。每 30 分钟刷新，失败时保留上一次的结果。
+
+位置默认按电视的公网 IP 估算（ipwho.is），也可以在 `local.properties` 里指定：
+
+```properties
+weather.city=上海
+# 或者精确坐标
+# weather.lat=31.23
+# weather.lon=121.47
+```
+
 ## Roadmap
 
 - [ ] 顶部 Tab 栏：应用 / 输入源 / 设置（TAB-01、TAB-04）

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Downloaded APKs (推荐应用) are shared with the system installer through FileProvider. -->
+<paths>
+    <external-files-path name="downloads" path="Download/" />
+</paths>

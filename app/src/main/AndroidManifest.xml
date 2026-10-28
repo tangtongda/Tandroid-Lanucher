@@ -2,6 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- TV only: no touchscreen, leanback optional so it also installs on phones/emulators for testing -->
+    <!-- TMDB backdrops -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Long-press menu: "卸载" opens the system uninstall dialog -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- 推荐应用: install downloaded APKs via the system installer -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 媒体库: videos / music / photos on USB drives (Android 13+: READ_MEDIA_*, older: READ_EXTERNAL_STORAGE) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
@@ -15,9 +27,28 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- To tell media apps from tools: who can open video / audio files -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="audio/*" />
+        </intent>
+        <!-- To find the original home screen for the "原桌面" tile -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <!-- To find (and de-duplicate) the system Settings app -->
+        <intent>
+            <action android:name="android.settings.SETTINGS" />
+        </intent>
     </queries>
 
     <application
+        android:name=".TLauncherApp"
         android:allowBackup="true"
         android:banner="@drawable/banner"
         android:icon="@drawable/ic_launcher"
@@ -46,5 +77,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

@@ -1,8 +1,23 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Secrets and per-machine settings live in local.properties (git-ignored), e.g.
+//   tmdb.token=<TMDB API Read Access Token>
+//   tmdb.apiBase=https://api.themoviedb.org/3/     (optional: a reverse proxy URL)
+//   tmdb.imageBase=https://image.tmdb.org/t/p/     (optional: a reverse proxy URL)
+//   tmdb.region=HK          (optional: region used to match streaming apps to TMDB "watch providers")
+//   youtube.apiKey=<key>    (optional: YouTube Data API v3, for YouTube's own trending videos)
+//   debug.demoApps=true     (optional: debug builds add fake Netflix/Spotify/… tiles for testing)
+//   weather.city=上海        (optional: weather location; or weather.lat / weather.lon. Default: from IP)
+val localProps = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+fun localProp(key: String, default: String = ""): String = localProps.getProperty(key, default)
 
 android {
     namespace = "com.tangtongda.tlauncher"
@@ -12,8 +27,18 @@ android {
         applicationId = "com.tangtongda.tlauncher"
         minSdk = 29          // Sony A80J: Google TV / Android 10
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+
+        buildConfigField("String", "TMDB_TOKEN", "\"${localProp("tmdb.token")}\"")
+        buildConfigField("String", "TMDB_API_BASE", "\"${localProp("tmdb.apiBase", "https://api.themoviedb.org/3/")}\"")
+        buildConfigField("String", "TMDB_IMAGE_BASE", "\"${localProp("tmdb.imageBase", "https://image.tmdb.org/t/p/")}\"")
+        buildConfigField("String", "TMDB_REGION", "\"${localProp("tmdb.region", "HK")}\"")
+        buildConfigField("String", "YOUTUBE_API_KEY", "\"${localProp("youtube.apiKey")}\"")
+        buildConfigField("String", "WEATHER_CITY", "\"${localProp("weather.city")}\"")
+        buildConfigField("String", "WEATHER_LAT", "\"${localProp("weather.lat")}\"")
+        buildConfigField("String", "WEATHER_LON", "\"${localProp("weather.lon")}\"")
+        buildConfigField("boolean", "DEMO_APPS", localProp("debug.demoApps", "false").toBoolean().toString())
     }
 
     buildTypes {
@@ -28,9 +53,15 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs += listOf(
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi",
+            "-opt-in=androidx.tv.material3.ExperimentalTvMaterial3Api",
+        )
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -46,6 +77,7 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.tv.material)
+    implementation(libs.coil.compose)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
