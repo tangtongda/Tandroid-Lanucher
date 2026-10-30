@@ -2,9 +2,9 @@
 """
 Generates the launcher's interface sounds (original, synthesized; no samples are used):
 
-  ui_nav_h.wav   focus moved left/right  (B5, soft glassy tick + short airy reverb)
-  ui_nav_v.wav   focus moved up/down     (A5, same timbre, a touch lower)
-  ui_select.wav  OK / open               (E5 -> B5 two-note "pop", longer tail)
+  ui_nav_h.wav   focus moved left/right  (A4, soft low "tock" + short airy reverb)
+  ui_nav_v.wav   focus moved up/down     (G4, same timbre, a touch lower)
+  ui_select.wav  OK / open               (C4 -> G4 two-note "pop", longer tail)
 
 Usage (needs numpy):
     python3 tools/make_sounds.py                 # writes into app/src/main/res/raw/
@@ -60,16 +60,16 @@ def save(name, x):
 # Focus move: a soft glassy tick (high sine + octave partial), very short body, airy tail.
 def tick(base):
     # Warmer: weaker overtones, a soft sub-octave for body, slightly longer decay.
-    body = tone([base, base * 2.01, base * 0.5], 0.11, 0.002, 0.024, [1.0, 0.12, 0.28])
-    click = lowpass(rng.standard_normal(int(SR * 0.006)), 2500) * 0.08
+    body = tone([base, base * 2.01, base * 0.5], 0.13, 0.002, 0.03, [1.0, 0.08, 0.35])
+    click = lowpass(rng.standard_normal(int(SR * 0.006)), 1800) * 0.06
     click = np.concatenate([click * np.linspace(1, 0, len(click)), np.zeros(len(body) - len(click))])
-    return finish(lowpass(reverb(body + click, tail=0.45, decay=0.16, mix=0.32, bright=2600), 3200), peak=0.45)
+    return finish(lowpass(reverb(body + click, tail=0.45, decay=0.16, mix=0.3, bright=2000), 2200), peak=0.5)
 
-save("ui_nav_h.wav", tick(988))    # B5 — left / right (was G6: too sharp)
-save("ui_nav_v.wav", tick(880))    # A5 — up / down (a touch lower)
+save("ui_nav_h.wav", tick(440))    # A4 — left / right (G6, then B5, were too high)
+save("ui_nav_v.wav", tick(392))    # G4 — up / down (a touch lower)
 
 # Select: two quick rising partials ("pop-ding"), rounder and a bit longer.
-a = tone([659, 1318, 330], 0.2, 0.003, 0.06, [1.0, 0.1, 0.25])   # E5
-b = tone([988, 1976, 494], 0.24, 0.003, 0.08, [1.0, 0.08, 0.2])   # B5
+a = tone([262, 524, 131], 0.22, 0.003, 0.07, [1.0, 0.1, 0.3])    # C4
+b = tone([392, 784, 196], 0.26, 0.003, 0.09, [1.0, 0.08, 0.25])   # G4
 sel = np.zeros(int(SR * 0.3)); sel[: len(a)] += a; sel[int(SR * 0.035): int(SR * 0.035) + len(b)] += b * 0.8
-save("ui_select.wav", finish(lowpass(reverb(sel, tail=0.7, decay=0.25, mix=0.38, bright=2600), 3200), peak=0.5))
+save("ui_select.wav", finish(lowpass(reverb(sel, tail=0.7, decay=0.25, mix=0.36, bright=2000), 2200), peak=0.55))

@@ -27,8 +27,8 @@ android {
         applicationId = "com.tangtongda.tlauncher"
         minSdk = 29          // Sony A80J: Google TV / Android 10
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
 
         buildConfigField("String", "TMDB_TOKEN", "\"${localProp("tmdb.token")}\"")
         buildConfigField("String", "TMDB_API_BASE", "\"${localProp("tmdb.apiBase", "https://api.themoviedb.org/3/")}\"")
