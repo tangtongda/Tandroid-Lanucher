@@ -12,11 +12,14 @@ Tandroid Launcher 是个人、非商业项目。以下资源归各自所有者�
 
   文件：`app/src/main/res/drawable/ic_input_*.png`（已统一处理为白色）。
 
+- 系统快捷方式与天气定位的图标（应用管理、网络、原桌面、定位）来自 [Icons8](https://icons8.com)（免费许可，需署名）。
+  文件：`app/src/main/res/drawable/ic8_*.png`。
+
 - 「系统应用」文件夹使用的电视品牌标志（Sony、Hisense、TCL、Xiaomi、Samsung、LG、Philips、Sharp、Skyworth、Google）
   为各公司的注册商标，仅用于在对应品牌的电视上标识其预装应用，不代表与这些公司有任何关联。
   文件：`app/src/main/res/drawable/banner_brand_*.png`。
 
-- 其余图标（系统快捷方式、HDMI 接口、游戏手柄、媒体库等）为本项目自绘。
+- 其余图标（设置、HDMI 接口、游戏手柄、媒体库等）为本项目自绘。
 
 ## 数据与内容
 

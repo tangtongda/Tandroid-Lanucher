@@ -1216,9 +1216,8 @@ private fun AppArtwork(app: AppInfo) {
             bitmap = banner, contentDescription = app.label,
             contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
         )
-        // No TV banner (phone apps, many sideloaded apps): build one in the same style as our
-        // built-in tiles: white card, the app's icon + its name. A lone small icon on a dark
-        // tile looked broken next to the white banners of Play Store / YouTube.
+        // No TV banner (phone apps, many sideloaded apps): white card with the app's icon centred,
+        // the same style as the built-in tiles (the name is shown as the hero title on focus).
         icon != null -> Box(
             Modifier
                 .fillMaxSize()
@@ -1226,18 +1225,7 @@ private fun AppArtwork(app: AppInfo) {
                 .padding(horizontal = 10.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(34.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    app.label,
-                    color = Color(0xFF3C4043),
-                    fontSize = if (app.label.length <= 4) 16.sp else 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Image(bitmap = icon, contentDescription = app.label, modifier = Modifier.size(58.dp))
         }
         else -> Box( // no artwork (and previews): colored tile with the initial
             Modifier
@@ -1373,38 +1361,32 @@ private fun ShortcutArtwork(shortcut: SystemShortcut) {
         return
     }
 
-    // White banner like Play Store / YouTube / Kodi next to it: colored glyph + name, side by side
-    // (a lone small glyph in the middle of a white card looked unfinished and was hard to tell apart).
+    // Same look as the TV's own Settings tile: one centred glyph, no text (the focused tile's name
+    // is shown as the hero title anyway). White card, matching Play Store / YouTube / Kodi banners.
     Box(
         Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFEEF1F5)))),
         contentAlignment = Alignment.Center,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (shortcut.id == "apps") {
-                FourColorGrid(Modifier.size(30.dp))
-            } else {
-                Icon(
-                    painter = painterResource(shortcut.iconRes),
-                    contentDescription = null,
-                    tint = shortcut.gradient.last(),
-                    modifier = Modifier
-                        .size(32.dp)
-                        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(Brush.verticalGradient(shortcut.gradient), blendMode = BlendMode.SrcIn)
-                        },
-                )
-            }
-            Spacer(Modifier.width(9.dp))
-            Text(
-                shortcut.label,
-                color = Color(0xFF3C4043), // Google's dark grey, as on the Play Store banner
-                fontSize = if (shortcut.label.length <= 3) 17.sp else 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+        if (!shortcut.tinted) {
+            Image(painterResource(shortcut.iconRes), contentDescription = shortcut.label, modifier = Modifier.size(58.dp))
+        } else {
+            Icon(
+                painter = painterResource(shortcut.iconRes),
+                contentDescription = shortcut.label,
+                tint = shortcut.gradient.last(),
+                modifier = Modifier
+                    .size(56.dp)
+                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                    .drawWithContent {
+                        drawContent()
+                        // Diagonal multi-colour fill (top-left → bottom-right), like modern app icons.
+                        drawRect(
+                            Brush.linearGradient(shortcut.gradient, start = Offset.Zero, end = Offset(size.width, size.height)),
+                            blendMode = BlendMode.SrcIn,
+                        )
+                    },
             )
         }
     }

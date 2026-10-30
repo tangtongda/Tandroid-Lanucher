@@ -35,6 +35,9 @@ sealed interface StoreSource {
      * asset of this repo's GitHub release (only for apps whose licence allows redistribution).
      */
     data class Url(val url: String, val sha256: String? = null) : StoreSource
+
+    /** One build per CPU: 64-bit or 32-bit Android (many TVs run 32-bit Android on 64-bit chips). */
+    data class ByAbi(val arm64: Url, val arm32: Url) : StoreSource
 }
 
 data class CatalogApp(
@@ -42,6 +45,8 @@ data class CatalogApp(
     val name: String,
     val description: String,
     val source: StoreSource,
+    /** Tried when [source] fails (unreachable, rate-limited, no matching APK). */
+    val fallback: StoreSource? = null,
     /** Group on the 应用 page: 影视 / 音乐 / 电视. */
     val category: String = "影视",
     /** When a release has several flavours, prefer assets whose name matches (e.g. TVBox "java" over "python"). */
@@ -57,8 +62,23 @@ val appCatalog = listOf(
         name = "BBLL",
         description = "第三方哔哩哔哩 TV 客户端",
         source = StoreSource.GitHub("xiaye13579/BBLL"),
+        fallback = StoreSource.Url(
+            "https://github.com/tangtongda/Tandroid-Lanucher/releases/download/store-apps/BBLL-1.5.2.apk",
+            sha256 = "fda091e6526b08dfa7c7ce30f0c1de46df27dd7a2b7bc3a48d228aa6762522f0",
+        ),
         detect = Regex("bbll|com\\.xx\\.blbl", RegexOption.IGNORE_CASE), // package com.xx.blbl, label BBLL
         colors = listOf(Color(0xFFFF7EAA), Color(0xFFE0457B)),
+    ),
+    CatalogApp(
+        id = "ibilitv",
+        name = "iBiliTV",
+        description = "第三方哔哩哔哩 TV 客户端",
+        source = StoreSource.Url(
+            "https://github.com/tangtongda/Tandroid-Lanucher/releases/download/store-apps/iBiliTV.apk",
+            sha256 = "73229ae195f45cdbfd4577b81962a4b4c9345a36abcd846e00dbc0647c127ef2",
+        ),
+        detect = Regex("ibili", RegexOption.IGNORE_CASE),
+        colors = listOf(Color(0xFF6FD3FF), Color(0xFF1E9BE0)),
     ),
     CatalogApp(
         id = "tvbox",
@@ -76,15 +96,42 @@ val appCatalog = listOf(
         name = "Kodi",
         description = "开源媒体中心，播放 U 盘 / NAS 视频",
         source = StoreSource.KodiMirror,
+        // Our own copy of the official 21.3 builds (GPL, unmodified), for when the mirrors are slow.
+        fallback = StoreSource.ByAbi(
+            arm64 = StoreSource.Url(
+                "https://github.com/tangtongda/Tandroid-Lanucher/releases/download/store-apps/kodi-21.3-Omega-arm64-v8a.apk",
+                sha256 = "34e7526705a038fa12f70161d0c1cc38f10deb0fee305b46fbd46ff015d05b44",
+            ),
+            arm32 = StoreSource.Url(
+                "https://github.com/tangtongda/Tandroid-Lanucher/releases/download/store-apps/kodi-21.3-Omega-armeabi-v7a.apk",
+                sha256 = "12d75e895649f68f217e42c2d881a94fd3177d7b9a7937825852aed545520cc8",
+            ),
+        ),
         detect = Regex("org\\.xbmc\\.kodi"),
         colors = listOf(Color(0xFF17B2E7), Color(0xFF0E6E99)),
     ),
 )
 
+/**
+ * GitHub release downloads redirect to githubusercontent.com, which is often unreachable or very
+ * slow on mainland networks. These public "GitHub file proxies" fetch the same file for you; the
+ * SHA-256 check after download catches any proxy that serves something else. Tried in order,
+ * after the direct link. Replace with your own (e.g. a Cloudflare Worker gh-proxy) for reliability.
+ */
+val githubProxies = listOf(
+    "https://ghfast.top/",
+    "https://gh-proxy.com/",
+)
+
+/** The direct URL first, then the same URL through each proxy (GitHub links only). */
+fun downloadCandidates(url: String): List<String> =
+    if (url.startsWith("https://github.com/")) listOf(url) + githubProxies.map { it + url } else listOf(url)
+
 sealed interface StoreState {
     data object Idle : StoreState
     data object Resolving : StoreState
-    data class Downloading(val progress: Float) : StoreState
+    /** [progress] 0..1, or -1 while the size isn't known yet (connecting, redirecting). */
+    data class Downloading(val progress: Float, val bytes: Long = 0) : StoreState
     data object Installing : StoreState
     /** Android 8+: the user has to allow "install unknown apps" for this launcher once. */
     data object NeedsPermission : StoreState
@@ -96,10 +143,14 @@ class AppStoreRepository(private val context: Context) {
     private data class Asset(val name: String, val url: String, val sha256: String?)
 
     /** Download URL and expected SHA-256 (if published) of the newest build for this TV's CPU. */
-    suspend fun resolve(app: CatalogApp): Pair<String, String?> = when (val src = app.source) {
-        is StoreSource.GitHub -> resolveGitHub(src.repo, app.preferAsset)
+    suspend fun resolve(app: CatalogApp, source: StoreSource = app.source): Pair<String, String?> = when (source) {
+        is StoreSource.GitHub -> resolveGitHub(source.repo, app.preferAsset)
         StoreSource.KodiMirror -> resolveKodi()
-        is StoreSource.Url -> src.url to src.sha256
+        is StoreSource.Url -> source.url to source.sha256
+        is StoreSource.ByAbi -> {
+            val pick = if (Build.SUPPORTED_ABIS.firstOrNull()?.contains("64") == true) source.arm64 else source.arm32
+            pick.url to pick.sha256
+        }
     }
 
     /**
@@ -202,7 +253,7 @@ class AppStoreRepository(private val context: Context) {
     }
 
     /** Download with the system DownloadManager into app-private storage, reporting 0..1 progress. */
-    suspend fun download(app: CatalogApp, url: String, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
+    suspend fun download(app: CatalogApp, url: String, onProgress: (progress: Float, bytes: Long) -> Unit): File = withContext(Dispatchers.IO) {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: error("没有可用的存储空间")
         val file = File(dir, "${app.id}.apk").apply { delete() }
         val dm = context.getSystemService(DownloadManager::class.java)
@@ -212,19 +263,35 @@ class AppStoreRepository(private val context: Context) {
                 .setDestinationUri(Uri.fromFile(file))
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE),
         )
-        while (true) {
-            dm.query(DownloadManager.Query().setFilterById(id))?.use { c ->
-                if (!c.moveToFirst()) error("下载被取消")
-                val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                val done = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                if (total > 0) onProgress((done.toFloat() / total).coerceIn(0f, 1f))
-                when (status) {
-                    DownloadManager.STATUS_SUCCESSFUL -> return@withContext file
-                    DownloadManager.STATUS_FAILED -> error("下载失败，请检查网络")
+        onProgress(-1f, 0) // queued: show "connecting" right away, not "looking for the latest version"
+        // Give up when nothing arrives for a while (pending forever, stalled CDN…), so the next
+        // source can be tried instead of the card sitting on one state indefinitely.
+        var lastBytes = -1L
+        var lastChange = System.currentTimeMillis()
+        try {
+            while (true) {
+                dm.query(DownloadManager.Query().setFilterById(id))?.use { c ->
+                    if (!c.moveToFirst()) error("下载被取消")
+                    val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                    val done = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                    val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                    onProgress(if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else -1f, done)
+                    if (done != lastBytes) {
+                        lastBytes = done
+                        lastChange = System.currentTimeMillis()
+                    }
+                    when (status) {
+                        DownloadManager.STATUS_SUCCESSFUL -> return@withContext file
+                        DownloadManager.STATUS_FAILED -> error("下载失败，请检查网络")
+                    }
+                    val stalledFor = System.currentTimeMillis() - lastChange
+                    if (stalledFor > (if (done == 0L) 30_000 else 60_000)) error("下载超时，网络太慢或无法连接")
                 }
+                delay(500)
             }
-            delay(500)
+        } catch (e: Throwable) {
+            dm.remove(id) // cancel the system download too
+            throw e
         }
         @Suppress("UNREACHABLE_CODE")
         file

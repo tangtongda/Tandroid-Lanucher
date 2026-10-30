@@ -40,9 +40,8 @@ data class TvBrand(val name: String, val logoKey: String?)
  */
 fun tvBrand(): TvBrand {
     val fake = if (BuildConfig.DEBUG) BuildConfig.DEBUG_TV_BRAND.trim() else ""
-    // BRAND first: it's the name on the box. MANUFACTURER can be the contract maker
-    // (a Nexus 5X says MANUFACTURER=LGE, BRAND=google); on TVs both are usually the same.
-    val raw = fake.ifBlank { Build.BRAND.ifBlank { Build.MANUFACTURER }.trim() }
+    // The maker of the hardware (a Nexus 5X says LGE, a Bravia says Sony); BRAND as fallback.
+    val raw = fake.ifBlank { Build.MANUFACTURER.ifBlank { Build.BRAND }.trim() }
     val name = brandName(raw)
     return TvBrand(name, logoKeys[name])
 }

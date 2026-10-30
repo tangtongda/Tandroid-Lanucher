@@ -317,11 +317,34 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                     setStore(item.id, StoreState.Installing)
                     store.extractBundled(item)
                 } else {
-                    setStore(item.id, StoreState.Resolving)
-                    val (url, sha) = store.resolve(item)
-                    val f = store.download(item, url) { setStore(item.id, StoreState.Downloading(it)) }
-                    if (!store.verify(f, sha)) error("安装包校验失败，请重试")
-                    f
+                    // Official source first; on any failure, our mirror (if the app has one).
+                    var lastError: Throwable? = null
+                    var downloaded: java.io.File? = null
+                    for (source in listOfNotNull(item.source, item.fallback)) {
+                        try {
+                            setStore(item.id, StoreState.Resolving)
+                            val (url, sha) = store.resolve(item, source)
+                            // Direct first, then through GitHub file proxies (see githubProxies).
+                            for (candidate in com.tangtongda.tlauncher.data.downloadCandidates(url)) {
+                                try {
+                                    val f = store.download(item, candidate) { p, bytes -> setStore(item.id, StoreState.Downloading(p, bytes)) }
+                                    if (!store.verify(f, sha)) error("安装包校验失败")
+                                    downloaded = f
+                                    break
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    lastError = e
+                                }
+                            }
+                            if (downloaded != null) break
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            lastError = e
+                        }
+                    }
+                    downloaded ?: throw (lastError ?: IllegalStateException("下载失败"))
                 }
                 setStore(item.id, StoreState.Installing)
                 store.install(file)

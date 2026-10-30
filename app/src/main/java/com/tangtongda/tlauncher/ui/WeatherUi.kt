@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
@@ -333,7 +334,8 @@ fun WeatherDetailDialog(
         WeatherScene(weather)
         // The only focusable thing on this screen: focus it so OK opens the city list.
         PillButton(
-            text = "📍 ${city ?: "自动定位"} · 切换城市",
+            text = "${city ?: "自动定位"} · 切换城市",
+            locateIcon = true,
             onClick = { picking = true },
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -431,7 +433,13 @@ fun WeatherDetailDialog(
 }
 
 @Composable
-private fun PillButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false) {
+private fun PillButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    locateIcon: Boolean = false,
+) {
     Surface(
         onClick = onClick,
         modifier = modifier.touchClickable(onClick = onClick),
@@ -444,7 +452,20 @@ private fun PillButton(text: String, onClick: () -> Unit, modifier: Modifier = M
             focusedContentColor = Color.Black,
         ),
     ) {
-        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp))
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (locateIcon) {
+                androidx.compose.foundation.Image(
+                    androidx.compose.ui.res.painterResource(com.tangtongda.tlauncher.R.drawable.ic8_locate),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        }
     }
 }
 
@@ -468,7 +489,8 @@ private fun CityPicker(current: String?, onPick: (String?) -> Unit, onClose: () 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     row.forEach { c ->
                         PillButton(
-                            text = c ?: "📍 自动定位",
+                            text = c ?: "自动定位",
+                            locateIcon = c == null,
                             selected = c == current,
                             onClick = { onPick(c) },
                             modifier = if (c == current) Modifier.focusRequester(first) else Modifier,

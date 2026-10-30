@@ -96,14 +96,18 @@ private fun StatusLine(state: StoreState) {
     val (text, color) = when (state) {
         StoreState.Idle -> "按 OK 安装" to Color(0xFF9FD3FF)
         StoreState.Resolving -> "正在获取最新版本…" to Color.White.copy(alpha = 0.8f)
-        is StoreState.Downloading -> "下载中 ${(state.progress * 100).toInt()}%" to Color.White.copy(alpha = 0.8f)
+        is StoreState.Downloading -> when {
+            state.progress >= 0f -> "下载中 ${(state.progress * 100).toInt()}%"
+            state.bytes > 0 -> "下载中 · 已下载 ${"%.1f".format(state.bytes / 1_048_576f)} MB"
+            else -> "正在连接下载服务器…"
+        } to Color.White.copy(alpha = 0.8f)
         StoreState.Installing -> "正在打开安装程序…" to Color.White.copy(alpha = 0.8f)
         StoreState.NeedsPermission -> "请允许「安装未知应用」，返回后再按一次 OK" to Color(0xFFFFD27F)
         is StoreState.Failed -> state.message to Color(0xFFFF8A80)
     }
     if (state is StoreState.Downloading) {
         Box(Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(2.dp))) {
-            Box(Modifier.fillMaxWidth(state.progress).height(3.dp).background(Color.White, RoundedCornerShape(2.dp)))
+            Box(Modifier.fillMaxWidth(state.progress.coerceIn(0f, 1f)).height(3.dp).background(Color.White, RoundedCornerShape(2.dp)))
         }
         Spacer(Modifier.height(4.dp))
     }
