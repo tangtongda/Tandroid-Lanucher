@@ -4,6 +4,7 @@
     <!-- TV only: no touchscreen, leanback optional so it also installs on phones/emulators for testing -->
     <!-- TMDB backdrops -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Long-press menu: "卸载" opens the system uninstall dialog -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- 推荐应用: install downloaded APKs via the system installer -->

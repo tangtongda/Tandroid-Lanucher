@@ -40,7 +40,8 @@ interface BackdropSource {
  * 2. TMDB titles that are actually on that streaming service ("watch providers": Netflix shows
  *    for Netflix, Disney+ shows for Disney+…)
  * 3. Generic TMDB trending, only for apps that are video apps
- * 4. Nothing: the hero falls back to the app's banner / tile color (Play Store, Settings, tools…)
+ * 4. TMDB unreachable: Bilibili's film / TV-series charts (reachable in mainland China)
+ * 5. Nothing: the hero falls back to the app's banner / tile color (Play Store, Settings, tools…)
  *
  * (The "real" per-app API on Android TV is preview channels in TvProvider, but third-party
  * launchers aren't allowed to read other apps' channels, so these public feeds stand in.)
@@ -56,6 +57,7 @@ class BackdropRepository(context: Context) {
         MusicChartSource(cache),
         TmdbProviderSource(tmdb),
         TmdbTrendingSource(tmdb),
+        ChinaVideoSource(cache), // TMDB unreachable (common on mainland networks): B站影视榜
     )
 
     /** Resolved lists per package, kept for 2 h; after that the chain runs again (and JsonCache
@@ -64,7 +66,10 @@ class BackdropRepository(context: Context) {
 
     suspend fun forApp(app: AppInfo): List<Backdrop> {
         memory[app.packageName]
-            ?.takeIf { System.currentTimeMillis() - it.first < REFRESH_MS }
+            ?.takeIf { (time, list) ->
+                // Nothing found (often: no network yet right after boot) → try again soon, not in 2 h.
+                System.currentTimeMillis() - time < if (list.isEmpty()) RETRY_EMPTY_MS else REFRESH_MS
+            }
             ?.let { return it.second }
         val result = withContext(Dispatchers.IO) {
             for (source in sources) {
@@ -86,9 +91,15 @@ class BackdropRepository(context: Context) {
         return final
     }
 
+    /** Network came back: retry every app that ended up with nothing. */
+    fun forgetEmpty() {
+        memory.entries.removeIf { it.value.second.isEmpty() }
+    }
+
     private companion object {
         const val TAG = "Backdrops"
         const val REFRESH_MS = 2 * 60 * 60 * 1000L
+        const val RETRY_EMPTY_MS = 3 * 60 * 1000L
     }
 }
 

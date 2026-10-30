@@ -162,6 +162,7 @@ private fun MediaCard(item: MediaItem, modifier: Modifier = Modifier, onClick: (
         Surface(
             onClick = onClick,
             modifier = modifier
+                .touchClickable(onClick = onClick)
                 .width(176.dp)
                 .height(99.dp),
             shape = ClickableSurfaceDefaults.shape(shape = CardShape),
@@ -272,7 +273,7 @@ private fun Notice(
             Spacer(Modifier.height(16.dp))
             Surface(
                 onClick = onAction,
-                modifier = actionModifier,
+                modifier = actionModifier.touchClickable(onClick = onAction),
                 shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(50)),
                 colors = ClickableSurfaceDefaults.colors(
                     containerColor = Color.White.copy(alpha = 0.16f),

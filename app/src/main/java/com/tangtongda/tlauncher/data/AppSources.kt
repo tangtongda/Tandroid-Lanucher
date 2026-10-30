@@ -53,6 +53,60 @@ class BilibiliSource(private val cache: JsonCache) : BackdropSource {
     }
 }
 
+/** Browser-like headers; Bilibili's web API rejects bare clients. */
+private val biliHeaders = mapOf(
+    "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Referer" to "https://www.bilibili.com/",
+)
+
+/**
+ * Last resort for video apps when TMDB can't be reached (api.themoviedb.org is often blocked on
+ * mainland networks): Bilibili's film and TV-series charts, which load fine in China. Only
+ * horizontal artwork is used (posters are portrait and would be cropped badly); if the charts
+ * give none, Bilibili's general popular feed.
+ */
+class ChinaVideoSource(private val cache: JsonCache) : BackdropSource {
+
+    override suspend fun load(app: AppInfo): List<Backdrop>? {
+        if (!looksLikeVideoApp(app)) return null
+        val movies = chart(2, "B站电影榜")
+        val series = chart(5, "B站电视剧榜")
+        val list = interleave(series, movies)
+        if (list.isNotEmpty()) return list.shuffled(java.util.Random(app.packageName.hashCode().toLong()))
+        return popular()
+    }
+
+    private fun chart(seasonType: Int, caption: String): List<Backdrop> {
+        val json = cache.get("bili:pgc:$seasonType", ttlMs = 2 * 60 * 60 * 1000L) {
+            httpGet("https://api.bilibili.com/pgc/web/rank/list?day=3&season_type=$seasonType", biliHeaders)
+        } ?: return emptyList()
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        if (root.optInt("code", -1) != 0) return emptyList()
+        val list = (root.optJSONObject("result") ?: root.optJSONObject("data"))?.optJSONArray("list") ?: return emptyList()
+        return (0 until list.length()).mapNotNull { i ->
+            val item = list.optJSONObject(i) ?: return@mapNotNull null
+            val pic = item.optString("ss_horizontal_cover").ifBlank {
+                item.optJSONObject("new_ep")?.optString("cover").orEmpty()
+            }.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Backdrop(item.optString("title"), pic.replaceFirst("http://", "https://"), caption)
+        }
+    }
+
+    private fun popular(): List<Backdrop>? {
+        val json = cache.get("bili:popular", ttlMs = 2 * 60 * 60 * 1000L) {
+            httpGet("https://api.bilibili.com/x/web-interface/popular?ps=20&pn=1", biliHeaders)
+        } ?: return null
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return null
+        if (root.optInt("code", -1) != 0) return null
+        val list = root.optJSONObject("data")?.optJSONArray("list") ?: return null
+        return (0 until list.length()).mapNotNull { i ->
+            val item = list.getJSONObject(i)
+            val pic = item.optString("pic").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Backdrop(item.optString("title"), pic.replaceFirst("http://", "https://"), "B站热门")
+        }.ifEmpty { null }
+    }
+}
+
 /**
  * YouTube: its own trending videos when `youtube.apiKey` is set (YouTube Data API v3).
  * Without a key, a TMDB mix instead: popular TV shows + popular movies for YouTube,

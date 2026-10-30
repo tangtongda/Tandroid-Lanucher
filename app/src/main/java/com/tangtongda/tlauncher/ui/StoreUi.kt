@@ -40,19 +40,31 @@ fun StoreSection(
 ) {
     Column(modifier) {
         Text("推荐应用", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            apps.forEach { app -> StoreCard(app, states[app.id] ?: StoreState.Idle) { onInstall(app) } }
+        Spacer(Modifier.height(12.dp))
+        // One block per category (影视 / 音乐 / 电视), in the order they first appear in the catalog.
+        apps.groupBy { it.category }.forEach { (category, group) ->
+        Text(category, color = Color.White.copy(alpha = 0.6f), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(10.dp))
+        // Three cards per row, sharing the width (three fixed 360dp cards ran off the right edge).
+        group.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                row.forEach { app ->
+                    StoreCard(app, states[app.id] ?: StoreState.Idle, Modifier.weight(1f)) { onInstall(app) }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+            Spacer(Modifier.height(20.dp))
+        }
         }
     }
 }
 
 @Composable
-private fun StoreCard(app: CatalogApp, state: StoreState, onClick: () -> Unit) {
+private fun StoreCard(app: CatalogApp, state: StoreState, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Surface(
         onClick = onClick,
-        modifier = Modifier.width(360.dp).height(96.dp),
+        modifier = modifier.height(96.dp).touchClickable(onClick = onClick),
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         colors = ClickableSurfaceDefaults.colors(

@@ -30,5 +30,20 @@ internal fun demoApps(installed: List<AppInfo>): List<AppInfo> {
         // Not media → no backdrop, banner/tint fallback
         AppInfo("com.example.demo.files", "文件管理"),
         AppInfo("com.example.demo.browser", "浏览器"),
+        // Pre-installed extras like a 国行 Sony's → should land in the 系统应用 folder
+        AppInfo("com.example.demo.sys.music", "音乐", isSystem = true),
+        AppInfo("com.example.demo.sys.decor", "生活空间装饰", isSystem = true),
+        AppInfo("com.example.demo.sys.smarthome", "智能家居", isSystem = true),
+        AppInfo("com.example.demo.sys.mirror", "手机畅联", isSystem = true),
+        AppInfo("com.example.demo.sys.ai", "AI语音助手", isSystem = true),
+        AppInfo("com.example.demo.sys.notice", "BRAVIA 通知", isSystem = true),
+        AppInfo("com.example.demo.sys.cast", "乐播投屏", isSystem = true),
+        AppInfo("com.example.demo.sys.member", "会员尊享", isSystem = true),
+        AppInfo("com.example.demo.sys.player", "媒体播放器", isSystem = true),
+        AppInfo("com.example.demo.sys.help", "帮助", isSystem = true),
+        AppInfo("com.example.demo.sys.eco", "节能控制面板", isSystem = true),
+        AppInfo("com.example.demo.sys.clock", "计时器和时钟", isSystem = true),
+        // Pre-installed but a real service → must stay on the home grid
+        AppInfo("com.example.demo.sys.gitv", "银河奇异果", isVideo = true, isSystem = true),
     ).filter { it.packageName !in have }
 }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HDMI port: trapezoid plug face with the pin strip (own drawing). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M3.5,7h17a1,1 0,0 1,1 1v4.2a1,1 0,0 1,-0.29 0.7l-3.3,3.3a1,1 0,0 1,-0.7 0.3H6.8a1,1 0,0 1,-0.7 -0.3l-3.3,-3.3a1,1 0,0 1,-0.3 -0.7V8a1,1 0,0 1,1 -1zM6.5,10.2v1.6h11v-1.6z"/>
+</vector>

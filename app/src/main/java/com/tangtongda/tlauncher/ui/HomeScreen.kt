@@ -7,6 +7,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -58,6 +61,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +76,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -115,6 +125,7 @@ import androidx.tv.material3.Text
 import com.tangtongda.tlauncher.R
 import com.tangtongda.tlauncher.data.AppInfo
 import com.tangtongda.tlauncher.data.CatalogApp
+import com.tangtongda.tlauncher.data.TvBrand
 import com.tangtongda.tlauncher.data.StoreState
 import com.tangtongda.tlauncher.data.Backdrop
 import com.tangtongda.tlauncher.data.MediaItem
@@ -148,8 +159,6 @@ private val TileRadius = 14.dp
 // Room for the focused tile to grow (1.12x of ~126x76dp ≈ +7dp/side) without touching the dock edge.
 private val DockPadding = 18.dp
 private val TileShape = RoundedCornerShape(TileRadius)
-// Concentric corners: outer radius = inner radius + padding, so the gap stays even around the curve.
-private val DockShape = RoundedCornerShape(TileRadius + DockPadding)
 
 /** Everything that can sit on the home grid. */
 sealed interface Tile {
@@ -166,6 +175,12 @@ sealed interface Tile {
         override val label: String get() = shortcut.label
     }
 
+    /** 系统应用: the TV maker's pre-installed extras, gathered in one folder. */
+    data object SystemFolder : Tile {
+        override val key: String get() = "sys:folder"
+        override val label: String get() = "系统应用"
+    }
+
     /** Live weather tile; selecting it opens the forecast. */
     data object WeatherTile : Tile {
         override val key: String get() = "sys:weather"
@@ -177,15 +192,18 @@ sealed interface Tile {
 
 @Composable
 fun HomeRoute(vm: HomeViewModel = viewModel()) {
-    val apps by vm.apps.collectAsStateWithLifecycle()
+    val apps by vm.homeApps.collectAsStateWithLifecycle()
+    val folderApps by vm.folderApps.collectAsStateWithLifecycle()
     val backdrops by vm.backdrops.collectAsStateWithLifecycle()
     val shortcuts by vm.shortcuts.collectAsStateWithLifecycle()
     val order by vm.order.collectAsStateWithLifecycle()
     val media by vm.media.collectAsStateWithLifecycle()
     val mediaPermission by vm.mediaPermission.collectAsStateWithLifecycle()
     val weather by vm.weather.collectAsStateWithLifecycle()
+    val weatherCity by vm.weatherCity.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val storeState by vm.storeState.collectAsStateWithLifecycle()
+    val hdmiPrompt by vm.hdmiPrompt.collectAsStateWithLifecycle()
     val askMediaPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         vm.onMediaPermissionResult()
     }
@@ -204,12 +222,19 @@ fun HomeRoute(vm: HomeViewModel = viewModel()) {
         onRequestMediaPermission = { askMediaPermission.launch(vm.mediaPermissions) },
         onOpenMedia = vm::openMedia,
         weather = weather,
+        weatherCity = weatherCity,
+        onPickWeatherCity = vm::setWeatherCity,
+        folderApps = folderApps,
+        brand = vm.brand,
+        onSetInFolder = vm::setInFolder,
         catalog = catalog,
         storeState = storeState,
         onInstallCatalog = vm::installCatalog,
-        onLive = vm::openLiveTv,
         onSettings = vm::openSettings,
     )
+    hdmiPrompt?.let { input ->
+        HdmiPromptDialog(input = input, onSwitch = vm::switchToHdmi, onDismiss = vm::dismissHdmi)
+    }
 }
 
 /** Top navigation, modelled on Google TV's bar (minus Library). "直播" is an action, not a page. */
@@ -233,19 +258,28 @@ fun HomeContent(
     onRequestMediaPermission: () -> Unit = {},
     onOpenMedia: (MediaItem) -> Unit = {},
     weather: Weather? = null,
+    weatherCity: String? = null,
+    onPickWeatherCity: (String?) -> Unit = {},
+    folderApps: List<AppInfo> = emptyList(),
+    brand: TvBrand = TvBrand("SONY", "sony"),
+    onSetInFolder: (AppInfo, Boolean) -> Unit = { _, _ -> },
     catalog: List<CatalogApp> = emptyList(),
     storeState: Map<String, StoreState> = emptyMap(),
     onInstallCatalog: (CatalogApp) -> Unit = {},
-    onLive: () -> Unit = {},
     onSettings: () -> Unit = {},
     now: LocalDateTime? = null, // fixed time for previews
 ) {
     var tab by remember { mutableStateOf(HomeTab.Home) }
     var menuFor by remember { mutableStateOf<Tile?>(null) } // long-press menu target
     var showWeather by remember { mutableStateOf(false) }
+    var showFolder by remember { mutableStateOf(false) }
+    var folderMenuFor by remember { mutableStateOf<AppInfo?>(null) } // long-press inside the folder
     val mediaEntry = remember { FocusRequester() }
-    val baseTiles: List<Tile> = remember(apps, shortcuts) {
-        apps.orEmpty().map { Tile.App(it) } + Tile.WeatherTile + shortcuts.map { Tile.Shortcut(it) }
+    val hasFolder = folderApps.isNotEmpty()
+    val baseTiles: List<Tile> = remember(apps, shortcuts, hasFolder) {
+        apps.orEmpty().map { Tile.App(it) } +
+            listOfNotNull(Tile.SystemFolder.takeIf { hasFolder }) +
+            Tile.WeatherTile + shortcuts.map { Tile.Shortcut(it) }
     }
     // Reordering ("move mode", like tvOS): hold OK on a tile, move it with the D-pad, OK/Back to drop.
     var moving by remember { mutableStateOf<String?>(null) }
@@ -253,13 +287,20 @@ fun HomeContent(
     val tiles: List<Tile> = remember(baseTiles, order, liveOrder) { sortByOrder(baseTiles, liveOrder ?: order) }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
 
+    // These are called from callbacks that are created once (see `grid`), so they must read the
+    // current order from state, never a `tiles` value captured in some earlier composition.
+    // (That stale capture was the bug: moves were computed from the original order, so a tile
+    // could only shift one step from where it started, and saving wrote a scrambled order.)
+    val latestTiles by rememberUpdatedState(tiles)
+    val latestOrderChange by rememberUpdatedState(onOrderChange)
+    fun currentKeys(): List<String> = liveOrder ?: latestTiles.map { it.key }
     fun finishMove() {
-        onOrderChange(tiles.map { it.key })
+        latestOrderChange(currentKeys())
         liveOrder = null
         moving = null
     }
     fun move(delta: Int) {
-        val keys = tiles.map { it.key }.toMutableList()
+        val keys = currentKeys().toMutableList()
         val from = keys.indexOf(moving ?: return)
         val to = (from + delta).coerceIn(0, keys.lastIndex)
         if (from != to) {
@@ -267,8 +308,15 @@ fun HomeContent(
             liveOrder = keys
         }
     }
+    // Back (and the remote's Home button while we're already in front) = top of 首页, first tile.
+    var homeRequest by remember { mutableStateOf(0) }
+    fun goHome() {
+        tab = HomeTab.Home
+        homeRequest++
+    }
     BackHandler(enabled = moving != null) { finishMove() }
-    BackHandler(enabled = moving == null && tab != HomeTab.Home) { tab = HomeTab.Home }
+    BackHandler(enabled = moving == null && menuFor == null && !showWeather && !showFolder) { goHome() }
+    LaunchedEffect(Unit) { HomeEvents.goHome.collect { if (moving == null) goHome() } }
     // Default focus once on open (FOCUS-06); not again when switching tabs.
     var didInitialFocus by remember { mutableStateOf(false) }
     LaunchedEffect(tiles.isNotEmpty()) {
@@ -317,29 +365,68 @@ fun HomeContent(
         ?.let { backdrops[it.app.packageName] }
         ?.takeIf { it.isNotEmpty() }
         ?.let { it[rotation % it.size] }
-    val grid = GridCallbacks(
-        requesters = requesters,
-        moving = moving,
-        weather = weather,
-        onClick = { tile ->
-            when (tile) {
-                is Tile.App -> onAppClick(tile.app)
-                is Tile.Shortcut -> onShortcutClick(tile.shortcut)
-                Tile.WeatherTile -> {
-                    showWeather = true
-                }
-            }
-        },
-        onLongClick = { tile -> menuFor = tile },
-        onFocused = {
-            focused = it
-            lastFocusedIndex = tiles.indexOfFirst { t -> t.key == it.key }.coerceAtLeast(0)
-        },
-        onMove = ::move,
-        onFinishMove = ::finishMove,
-    )
-
+    // Built once (per move-mode / weather change) so tiles can skip recomposition when focus moves;
+    // the callbacks read the latest state through rememberUpdatedState.
+    val latestAppClick by rememberUpdatedState(onAppClick)
+    val latestShortcutClick by rememberUpdatedState(onShortcutClick)
     val scroll = remember(tab) { ScrollState(0) }
+    val latestScroll by rememberUpdatedState(scroll)
+    val scope = rememberCoroutineScope()
+    val grid = remember(moving, weather) {
+        GridCallbacks(
+            requesters = requesters,
+            moving = moving,
+            weather = weather,
+            brand = brand,
+            onClick = { tile ->
+                when (tile) {
+                    is Tile.App -> latestAppClick(tile.app)
+                    is Tile.Shortcut -> latestShortcutClick(tile.shortcut)
+                    Tile.WeatherTile -> {
+                        showWeather = true
+                    }
+                    Tile.SystemFolder -> {
+                        showFolder = true
+                    }
+                }
+            },
+            onLongClick = { tile -> menuFor = tile },
+            onFocused = {
+                focused = it
+                val index = latestTiles.indexOfFirst { t -> t.key == it.key }.coerceAtLeast(0)
+                lastFocusedIndex = index
+                // Bring-into-view only scrolls "just enough" for the tile itself, so on the first
+                // row the title above it stayed hidden, and on the last row the lifted tile was
+                // cut at the bottom edge. Snap to the very top / very bottom for those rows.
+                val lastRow = (latestTiles.size - 1) / COLUMNS
+                when (index / COLUMNS) {
+                    0 -> scope.launch {
+                        // Wait two frames: the focus system's own "scroll just enough" starts right
+                        // after this callback and would otherwise cancel our scroll to the top.
+                        withFrameNanos { }
+                        withFrameNanos { }
+                        latestScroll.animateScrollTo(0, tween(300, easing = Emphasized))
+                    }
+                    lastRow -> scope.launch {
+                        withFrameNanos { } // same as above: run after the focus system's own scroll
+                        withFrameNanos { }
+                        latestScroll.animateScrollTo(latestScroll.maxValue, tween(300, easing = Emphasized))
+                    }
+                }
+            },
+            onMove = { move(it) },
+            onFinishMove = { finishMove() },
+        )
+    }
+    val rows = remember(tiles) { tiles.chunked(COLUMNS) }
+
+    LaunchedEffect(homeRequest) {
+        if (homeRequest == 0) return@LaunchedEffect
+        withFrameNanos { } // let 首页 compose first
+        scroll.animateScrollTo(0, tween(300, easing = Emphasized))
+        lastFocusedIndex = 0
+        latestTiles.firstOrNull()?.let { runCatching { requesters[it.key]?.requestFocus() } }
+    }
     // Page content fades/slides up on tab switch (and on first open).
     val contentIn = remember { Animatable(0f) }
     LaunchedEffect(tab) {
@@ -348,17 +435,31 @@ fun HomeContent(
     }
     // Nav bar tucks away once you scroll into the grid, and comes back when focused or at the top.
     var navFocused by remember { mutableStateOf(false) }
+    // Reaching the top bar always shows the top of the page (title, first row), like Google TV.
+    LaunchedEffect(navFocused) {
+        if (navFocused && scroll.value > 0) scroll.animateScrollTo(0, tween(300, easing = Emphasized))
+    }
+    val atTop by remember(scroll) { derivedStateOf { scroll.value < 24 } }
     val navShown by animateFloatAsState(
-        targetValue = if (navFocused || scroll.value < 24) 1f else 0f,
+        targetValue = if (navFocused || atTop) 1f else 0f,
         animationSpec = tween(250, easing = Emphasized),
         label = "navShown",
     )
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().onPreviewKeyEvent { UiSounds.onKey(it); false }) {
         HeroBackdrop(
             tile = hero,
             backdrop = heroBackdrop,
             accentOverride = if (hero == Tile.WeatherTile) weatherGradient(weather).first() else null,
+            weather = weather,
+        )
+        // As the grid scrolls up, the picture fades to the page background, so lower rows sit on
+        // one calm surface instead of a busy image (read in the draw phase: no recomposition).
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = (scroll.value / 260f).coerceIn(0f, 1f) }
+                .background(Background.copy(alpha = 0.92f)),
         )
 
         // Compose 1.7 on TV scrolls the focused item to a ~30% "pivot" by default, which pushed
@@ -372,7 +473,9 @@ fun HomeContent(
                         translationY = (1f - contentIn.value) * 16.dp.toPx()
                     }
                     .verticalScroll(scroll) // focus on lower rows scrolls the page
-                    .padding(vertical = 27.dp),
+                    // Generous bottom space: the last row, lifted and shadowed when focused, sits
+                    // well clear of the screen edge (and TV overscan) when scrolled to the end.
+                    .padding(top = 27.dp, bottom = 80.dp),
             ) {
                 if (tab == HomeTab.Media) {
                     Spacer(Modifier.height(NavBarHeight + 28.dp))
@@ -395,9 +498,9 @@ fun HomeContent(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = SideMargin),
                     )
-                    tiles.chunked(COLUMNS).forEach { row ->
+                    rows.forEach { row ->
                         Spacer(Modifier.height(24.dp))
-                        TileRow(row = row, grid = grid, modifier = Modifier.padding(horizontal = SideMargin + DockPadding))
+                        TileRow(row = row, grid = grid, modifier = Modifier.padding(horizontal = SideMargin))
                     }
                     if (catalog.isNotEmpty()) {
                         Spacer(Modifier.height(36.dp))
@@ -411,14 +514,18 @@ fun HomeContent(
                     return@Column
                 }
 
-                Spacer(Modifier.height(NavBarHeight + 185.dp)) // hero image shows through up here
+                Spacer(Modifier.height(NavBarHeight + 190.dp)) // hero image shows through up here
                 HeroText(
-                    title = if (hero == Tile.WeatherTile && weather != null) {
+                    title = if (hero == Tile.SystemFolder) {
+                        "系统应用"
+                    } else if (hero == Tile.WeatherTile && weather != null) {
                         "${weather.city.ifBlank { "天气" }} ${weather.temperature}°"
                     } else {
                         hero?.label.orEmpty()
                     },
-                    subtitle = if (hero == Tile.WeatherTile && weather != null) {
+                    subtitle = if (hero == Tile.SystemFolder) {
+                        "${brand.name} 预装的 ${folderApps.size} 个应用 · 按 OK 打开"
+                    } else if (hero == Tile.WeatherTile && weather != null) {
                         listOfNotNull(
                             weather.description,
                             if (weather.high != null && weather.low != null) "${weather.low}° / ${weather.high}°" else null,
@@ -438,15 +545,14 @@ fun HomeContent(
                         modifier = Modifier.padding(horizontal = SideMargin),
                     )
                 } else if (tiles.isNotEmpty()) {
-                    val rows = tiles.chunked(COLUMNS)
-                    Dock(row = rows.first(), grid = grid)
-                    // Remaining rows: same columns as the dock, aligned to its inner edge.
+                    Spacer(Modifier.height(DockPadding))
+                    FirstRow(row = rows.first(), grid = grid)
                     rows.drop(1).forEach { row ->
                         Spacer(Modifier.height(32.dp)) // only a sliver of row 2 peeks at the bottom edge
                         TileRow(
                             row = row,
                             grid = grid,
-                            modifier = Modifier.padding(horizontal = SideMargin + DockPadding),
+                            modifier = Modifier.padding(horizontal = SideMargin),
                         )
                     }
                 }
@@ -476,20 +582,65 @@ fun HomeContent(
                 tab = tab,
                 down = downTarget,
                 onTab = { tab = it },
-                onLive = onLive,
                 onSettings = onSettings,
                 now = now,
             )
         }
 
         if (showWeather) {
-            WeatherDetailDialog(weather = weather, onDismiss = { showWeather = false })
+            WeatherDetailDialog(
+                weather = weather,
+                onDismiss = { showWeather = false },
+                city = weatherCity,
+                onPickCity = onPickWeatherCity,
+            )
+        }
+
+        if (showFolder) {
+            SystemFolderDialog(
+                brand = brand,
+                apps = folderApps,
+                onLaunch = { app ->
+                    showFolder = false
+                    onAppClick(app)
+                },
+                onLongPress = { folderMenuFor = it },
+                onDismiss = { showFolder = false },
+            )
+        }
+
+        folderMenuFor?.let { app ->
+            TileMenu(
+                tile = Tile.App(app),
+                onDismiss = { folderMenuFor = null },
+                onMove = null, // order inside the folder is alphabetical
+                onAppInfo = {
+                    folderMenuFor = null
+                    onAppInfo(it)
+                },
+                onUninstall = {
+                    folderMenuFor = null
+                    onUninstall(it)
+                },
+                folderAction = "移到首页" to {
+                    folderMenuFor = null
+                    onSetInFolder(app, false)
+                    if (folderApps.size <= 1) showFolder = false // that was the last one
+                    Unit
+                },
+            )
         }
 
         menuFor?.let { target ->
             TileMenu(
                 tile = target,
                 onDismiss = { menuFor = null },
+                folderAction = (target as? Tile.App)?.let { t ->
+                    "移入系统应用" to {
+                        menuFor = null
+                        onSetInFolder(t.app, true)
+                    }
+                },
                 onMove = {
                     menuFor = null
                     moving = target.key
@@ -528,9 +679,11 @@ fun HomeContent(
 private fun TileMenu(
     tile: Tile,
     onDismiss: () -> Unit,
-    onMove: () -> Unit,
+    onMove: (() -> Unit)?,
     onAppInfo: (AppInfo) -> Unit,
     onUninstall: (AppInfo) -> Unit,
+    /** Extra entry: "移入系统应用" on the home grid, "移到首页" inside the folder. */
+    folderAction: Pair<String, () -> Unit>? = null,
 ) {
     val app = (tile as? Tile.App)?.app
     val first = remember { FocusRequester() }
@@ -571,7 +724,10 @@ private fun TileMenu(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 6.dp, bottom = 6.dp),
             )
-            MenuItem("移动位置", Modifier.focusRequester(first), onClick = onMove)
+            if (onMove != null) MenuItem("移动位置", Modifier.focusRequester(first), onClick = onMove)
+            folderAction?.let { (label, action) ->
+                MenuItem(label, if (onMove == null) Modifier.focusRequester(first) else Modifier, onClick = action)
+            }
             if (app != null) {
                 MenuItem("应用信息", onClick = { onAppInfo(app) })
                 if (!app.isSystem) {
@@ -586,7 +742,7 @@ private fun TileMenu(
 private fun MenuItem(text: String, modifier: Modifier = Modifier, destructive: Boolean = false, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().touchClickable(onClick = onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
         colors = ClickableSurfaceDefaults.colors(
@@ -614,10 +770,12 @@ private fun sortByOrder(tiles: List<Tile>, order: List<String>): List<Tile> {
 }
 
 /** Everything a tile needs from the grid: focus handles, actions and move-mode state. */
+@Stable
 private class GridCallbacks(
     val requesters: MutableMap<String, FocusRequester>,
     val moving: String?,
     val weather: Weather?,
+    val brand: TvBrand,
     val onClick: (Tile) -> Unit,
     val onLongClick: (Tile) -> Unit,
     val onFocused: (Tile) -> Unit,
@@ -631,11 +789,13 @@ private val NavBarHeight = 44.dp
 
 private val MinimalBringIntoView = object : BringIntoViewSpec {
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        // Keep a margin (≈24dp on a 1080p TV) so the lifted, shadowed tile isn't flush with the edge.
+        val m = 48f.coerceAtMost((containerSize - size) / 2f).coerceAtLeast(0f)
         val trailing = offset + size
         return when {
-            offset >= 0f && trailing <= containerSize -> 0f // already fully visible
-            offset < 0f -> offset                           // above: scroll up just enough
-            else -> trailing - containerSize                // below: scroll down just enough
+            offset >= m && trailing <= containerSize - m -> 0f // already comfortably visible
+            offset < m -> offset - m                           // above: scroll up just enough
+            else -> trailing - containerSize + m               // below: scroll down just enough
         }
     }
 }
@@ -648,7 +808,7 @@ private val MinimalBringIntoView = object : BringIntoViewSpec {
  * 3. scrims so the title and clock stay readable (DISTANCE-02)
  */
 @Composable
-private fun HeroBackdrop(tile: Tile?, backdrop: Backdrop?, accentOverride: Color? = null) {
+private fun HeroBackdrop(tile: Tile?, backdrop: Backdrop?, accentOverride: Color? = null, weather: Weather? = null) {
     // Without artwork, tint the hero with the focused tile's color so the screen still
     // changes as focus moves, instead of sitting on an empty dark gradient.
     val tint by animateColorAsState(
@@ -684,11 +844,10 @@ private fun HeroBackdrop(tile: Tile?, backdrop: Backdrop?, accentOverride: Color
             },
     ) {
         if (backdrop != null) {
-            // TMDB image (1280px), cross-fading as focus moves. Coil caches it on disk.
-            Crossfade(targetState = backdrop, animationSpec = tween(700, easing = FastOutSlowInEasing), label = "hero") { b ->
-                // Slow "Ken Burns" settle: each new image starts slightly zoomed in and eases back.
-                val zoom = remember(b.imageUrl) { Animatable(1.08f) }
-                LaunchedEffect(b.imageUrl) { zoom.animateTo(1f, tween(10_000, easing = LinearOutSlowInEasing)) }
+            // Full-resolution image, cross-fading as focus moves. Coil caches it on disk.
+            // No zoom/"Ken Burns": on the TV it redrew a full-screen bitmap every frame for 10 s
+            // (jank while moving focus) and the upscaling made the picture look soft.
+            Crossfade(targetState = backdrop, animationSpec = tween(500, easing = FastOutSlowInEasing), label = "hero") { b ->
                 if (b.square) {
                     // Album art: big cover on the right, tinted with the tile color, fading into the
                     // background on its left edge (cropping a square to 16:9 would cut half of it).
@@ -700,11 +859,7 @@ private fun HeroBackdrop(tile: Tile?, backdrop: Backdrop?, accentOverride: Color
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .fillMaxHeight(0.78f)
-                                .aspectRatio(1f)
-                                .graphicsLayer {
-                                    scaleX = zoom.value
-                                    scaleY = zoom.value
-                                },
+                                .aspectRatio(1f),
                         )
                         Box(
                             Modifier
@@ -723,16 +878,19 @@ private fun HeroBackdrop(tile: Tile?, backdrop: Backdrop?, accentOverride: Color
                         model = b.imageUrl,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        alpha = 0.9f,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = zoom.value
-                                scaleY = zoom.value
-                            },
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
+        }
+        // Weather tile: today's sky, animated (sun, stars, clouds, rain, snow…), fading in and out.
+        // Only composed while the weather tile is the hero, so the animation costs nothing otherwise.
+        AnimatedVisibility(
+            visible = tile == Tile.WeatherTile,
+            enter = fadeIn(tween(600, easing = Emphasized)),
+            exit = fadeOut(tween(400)),
+        ) {
+            WeatherScene(weather)
         }
         // No backdrop (tools, Settings, Play Store…): just the color glow picked from the app's
         // own artwork. Stretching its 320x180 banner full-screen looked blurry.
@@ -756,7 +914,6 @@ private fun NavBar(
     tab: HomeTab,
     down: FocusRequester,
     onTab: (HomeTab) -> Unit,
-    onLive: () -> Unit,
     onSettings: () -> Unit,
     now: LocalDateTime?,
 ) {
@@ -769,19 +926,29 @@ private fun NavBar(
             }
         }
     }
+    val tabFocus = remember { HomeTab.entries.associateWith { FocusRequester() } }
     Row(
         Modifier
             .fillMaxWidth()
             .height(NavBarHeight)
-            .padding(horizontal = SideMargin),
+            .padding(horizontal = SideMargin)
+            // Coming up from the page always lands on the current page's tab (首页 on the home
+            // screen = Home), not on whichever tab happens to sit geometrically above the focused tile.
+            .focusProperties { enter = { tabFocus.getValue(tab) } }
+            .focusGroup(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Like Google TV, pages switch as focus lands on them; "直播" opens the TV app on OK.
+        // Like Google TV, pages switch as focus lands on them.
         val toGrid = Modifier.focusProperties { this.down = down }
-        NavTab("首页", toGrid, selected = tab == HomeTab.Home, onFocused = { onTab(HomeTab.Home) }, onClick = { onTab(HomeTab.Home) })
-        NavTab("直播", toGrid, selected = false, onFocused = {}, onClick = onLive)
-        NavTab("媒体库", toGrid, selected = tab == HomeTab.Media, onFocused = { onTab(HomeTab.Media) }, onClick = { onTab(HomeTab.Media) })
-        NavTab("应用", toGrid, selected = tab == HomeTab.Apps, onFocused = { onTab(HomeTab.Apps) }, onClick = { onTab(HomeTab.Apps) })
+        for ((page, label) in listOf(HomeTab.Home to "Home", HomeTab.Apps to "App", HomeTab.Media to "Media")) {
+            NavTab(
+                label,
+                toGrid.focusRequester(tabFocus.getValue(page)),
+                selected = tab == page,
+                onFocused = { onTab(page) },
+                onClick = { onTab(page) },
+            )
+        }
 
         Spacer(Modifier.weight(1f))
         NavIcon(R.drawable.ic_sys_settings, "设置", toGrid, onSettings)
@@ -797,11 +964,22 @@ private fun NavBar(
 
 @Composable
 private fun NavTab(text: String, modifier: Modifier, selected: Boolean, onFocused: () -> Unit, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val click = {
+        UiSounds.click(context)
+        onClick()
+    }
     Surface(
-        onClick = onClick,
+        onClick = click,
         modifier = modifier
             .padding(end = 4.dp)
-            .onFocusChanged { if (it.isFocused) onFocused() },
+            .touchClickable(onClick = click)
+            .onFocusChanged {
+                if (it.isFocused) {
+                    UiSounds.focusMoved(context)
+                    onFocused()
+                }
+            },
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(50)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
         colors = ClickableSurfaceDefaults.colors(
@@ -824,7 +1002,7 @@ private fun NavTab(text: String, modifier: Modifier, selected: Boolean, onFocuse
 private fun NavIcon(iconRes: Int, label: String, modifier: Modifier, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        modifier = modifier.size(36.dp),
+        modifier = modifier.size(36.dp).touchClickable(onClick = onClick),
         shape = ClickableSurfaceDefaults.shape(shape = CircleShape),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
         colors = ClickableSurfaceDefaults.colors(
@@ -848,17 +1026,25 @@ private fun HeroText(title: String, subtitle: String?, showTmdbCredit: Boolean) 
         transitionSpec = {
             (fadeIn(tween(350, delayMillis = 60, easing = Emphasized)) +
                 slideInVertically(tween(450, easing = Emphasized)) { it / 3 }) togetherWith
-                (fadeOut(tween(150)) + slideOutVertically(tween(200)) { -it / 6 })
+                (fadeOut(tween(150)) + slideOutVertically(tween(200)) { -it / 6 }) using
+                SizeTransform(clip = false) { _, _ -> snap() }
         },
         label = "heroText",
-        modifier = Modifier.padding(horizontal = SideMargin),
+        // Fixed height (title + caption + TMDB line). Its height used to change with the focused
+        // tile (caption / credit line present or not), which pushed every row below up and down a
+        // moment after each focus move: the "bounce" while scrolling.
+        modifier = Modifier
+            .padding(horizontal = SideMargin)
+            .fillMaxWidth()
+            .height(68.dp),
+        contentAlignment = Alignment.TopStart,
     ) { (text, sub, credit) ->
         Column {
             Text(
                 text = text,
                 color = TextPrimary,
-                fontSize = 40.sp, // DISTANCE-01: large header
-                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp, // just above the 16sp caption; big titles covered the artwork
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -888,24 +1074,17 @@ private fun HeroText(title: String, subtitle: String?, showTmdbCredit: Boolean) 
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun Dock(row: List<Tile>, grid: GridCallbacks) {
+private fun FirstRow(row: List<Tile>, grid: GridCallbacks) {
+    // No panel behind the first row any more: it read as a separate strip from the rows below.
+    // All rows now sit straight on the hero, which darkens towards the bottom and as you scroll.
     val first = grid.requester(row.first())
-    // Translucent "glass" panel. Real background blur needs Android 12+ and the A80J is
-    // Android 10, so this is a tinted, bordered panel instead.
-    Box(
-        Modifier
+    TileRow(
+        row = row,
+        grid = grid,
+        modifier = Modifier
             .padding(horizontal = SideMargin)
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.10f), DockShape)
-            .border(1.dp, Color.White.copy(alpha = 0.18f), DockShape)
-            .padding(DockPadding),
-    ) {
-        TileRow(
-            row = row,
-            grid = grid,
-            modifier = Modifier.focusRestorer { first }, // FOCUS-07
-        )
-    }
+            .focusRestorer { first }, // FOCUS-07
+    )
 }
 
 @Composable
@@ -926,6 +1105,7 @@ private fun TileRow(row: List<Tile>, grid: GridCallbacks, modifier: Modifier = M
  */
 @Composable
 private fun RowScope.HomeTile(tile: Tile, grid: GridCallbacks) {
+    val context = LocalContext.current
     var isFocused by remember { mutableStateOf(false) }
     val isMoving = grid.moving == tile.key
     val wobble = if (isMoving) {
@@ -953,12 +1133,18 @@ private fun RowScope.HomeTile(tile: Tile, grid: GridCallbacks) {
         animationSpec = FocusSpring,
         label = "tileScale",
     )
+    val click = {
+        UiSounds.click(context)
+        if (grid.moving != null) grid.onFinishMove() else grid.onClick(tile)
+    }
+    val longClick = { if (grid.moving == null) grid.onLongClick(tile) }
     Surface(
-        onClick = { if (grid.moving != null) grid.onFinishMove() else grid.onClick(tile) },
+        onClick = click,
         interactionSource = interaction,
-        onLongClick = { if (grid.moving == null) grid.onLongClick(tile) },
+        onLongClick = longClick,
         modifier = Modifier
             .weight(1f)
+            .touchClickable(onLongClick = longClick, onClick = click)
             .aspectRatio(5f / 3f) // ~126x76dp = 252x152px ≥ 250x150 (FOCUS-05)
             .focusRequester(grid.requester(tile))
             .onPreviewKeyEvent { event ->
@@ -977,8 +1163,12 @@ private fun RowScope.HomeTile(tile: Tile, grid: GridCallbacks) {
                 scaleX = scale
                 scaleY = scale
                 rotationZ = wobble
+                // RenderThread shadow: much cheaper on a TV GPU than tv-material's Glow.
+                shadowElevation = if (isFocused) 14.dp.toPx() else 0f
+                shape = TileShape
             }
             .onFocusChanged {
+                if (it.isFocused && !isFocused) UiSounds.focusMoved(context)
                 isFocused = it.isFocused
                 if (it.isFocused) grid.onFocused(tile)
             },
@@ -987,9 +1177,7 @@ private fun RowScope.HomeTile(tile: Tile, grid: GridCallbacks) {
         border = ClickableSurfaceDefaults.border(
             focusedBorder = if (isMoving) Border(BorderStroke(3.dp, Color.White), shape = TileShape) else Border.None,
         ),
-        glow = ClickableSurfaceDefaults.glow(
-            focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.6f), elevation = 16.dp),
-        ),
+        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow.None),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = SurfaceColor,
             focusedContainerColor = SurfaceColor,
@@ -1000,6 +1188,7 @@ private fun RowScope.HomeTile(tile: Tile, grid: GridCallbacks) {
                 is Tile.App -> AppArtwork(tile.app)
                 is Tile.Shortcut -> ShortcutArtwork(tile.shortcut)
                 Tile.WeatherTile -> WeatherArtwork(grid.weather)
+                Tile.SystemFolder -> FolderArtwork(grid.brand)
             }
             if (isFocused) {
                 // Specular sheen from the top-left, like light catching a glass icon.
@@ -1027,8 +1216,28 @@ private fun AppArtwork(app: AppInfo) {
             bitmap = banner, contentDescription = app.label,
             contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
         )
-        icon != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Image(bitmap = icon, contentDescription = app.label, modifier = Modifier.size(44.dp))
+        // No TV banner (phone apps, many sideloaded apps): build one in the same style as our
+        // built-in tiles: white card, the app's icon + its name. A lone small icon on a dark
+        // tile looked broken next to the white banners of Play Store / YouTube.
+        icon != null -> Box(
+            Modifier
+                .fillMaxSize()
+                .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFEEF1F5))))
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(34.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    app.label,
+                    color = Color(0xFF3C4043),
+                    fontSize = if (app.label.length <= 4) 16.sp else 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         else -> Box( // no artwork (and previews): colored tile with the initial
             Modifier
@@ -1040,6 +1249,108 @@ private fun AppArtwork(app: AppInfo) {
                 text = app.label.take(1).uppercase(),
                 color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold,
             )
+        }
+    }
+}
+
+/**
+ * 系统应用 folder tile: the TV brand's logo on white (res/drawable/banner_brand_<key>.png, supplied
+ * by the user). res/drawable/banner_sys_folder.png overrides it; with neither, the brand name as text.
+ */
+@Composable
+private fun FolderArtwork(brand: TvBrand) {
+    val context = LocalContext.current
+    val customRes = remember(brand) {
+        val res = context.resources
+        res.getIdentifier("banner_sys_folder", "drawable", context.packageName).takeIf { it != 0 }
+            ?: brand.logoKey?.let { res.getIdentifier("banner_brand_$it", "drawable", context.packageName) }
+            ?: 0
+    }
+    if (customRes != 0) {
+        Image(
+            painter = painterResource(customRes),
+            contentDescription = "系统应用",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        return
+    }
+    Box(Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
+        Text(
+            brand.name,
+            color = Color.Black,
+            fontSize = if (brand.name.length <= 5) 26.sp else 18.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = if (brand.name.length <= 5) 3.sp else 1.sp,
+            maxLines = 1,
+        )
+        Text(
+            "系统应用",
+            color = Color(0xFF8A8F98),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp),
+        )
+    }
+}
+
+/** Opened folder: every pre-installed extra as a card with its name; OK opens, hold OK for the menu. */
+@Composable
+private fun SystemFolderDialog(
+    brand: TvBrand,
+    apps: List<AppInfo>,
+    onLaunch: (AppInfo) -> Unit,
+    onLongPress: (AppInfo) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val first = remember { FocusRequester() }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0xF2101318))
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = SideMargin, vertical = 36.dp),
+        ) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("系统应用", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(12.dp))
+                Text("${brand.name} 预装 · ${apps.size} 个", color = TextSecondary, fontSize = 14.sp, modifier = Modifier.padding(bottom = 3.dp))
+            }
+            Spacer(Modifier.height(20.dp))
+            apps.sortedBy { it.label.lowercase() }.chunked(6).forEachIndexed { r, row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TileGap)) {
+                    row.forEachIndexed { c, app ->
+                        val focusMod = if (r == 0 && c == 0) Modifier.focusRequester(first) else Modifier
+                        Column(Modifier.weight(1f)) {
+                            Surface(
+                                onClick = { onLaunch(app) },
+                                onLongClick = { onLongPress(app) },
+                                modifier = focusMod.fillMaxWidth().aspectRatio(16f / 9f)
+                                    .touchClickable(onLongClick = { onLongPress(app) }) { onLaunch(app) },
+                                shape = ClickableSurfaceDefaults.shape(shape = TileShape),
+                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+                                glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow.None),
+                                colors = ClickableSurfaceDefaults.colors(containerColor = SurfaceColor, focusedContainerColor = SurfaceColor),
+                            ) {
+                                AppArtwork(app)
+                            }
+                            Text(
+                                app.label,
+                                color = TextSecondary,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                            )
+                        }
+                    }
+                    repeat(6 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+                Spacer(Modifier.height(18.dp))
+            }
+            Text("长按可移到首页 · 按返回键关闭", color = TextSecondary.copy(alpha = 0.7f), fontSize = 12.sp)
         }
     }
 }
@@ -1062,31 +1373,24 @@ private fun ShortcutArtwork(shortcut: SystemShortcut) {
         return
     }
 
-    // Light tile + colored glyph, matching the white banners of Play Store / YouTube / Kodi next
-    // to it (a modern "white card, colorful symbol" icon style). The glyph is painted with the
-    // shortcut's gradient and sits on a faint drop shadow; "应用管理" gets a four-color grid.
+    // White banner like Play Store / YouTube / Kodi next to it: colored glyph + name, side by side
+    // (a lone small glyph in the middle of a white card looked unfinished and was hard to tell apart).
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFE6EBF1)))),
+            .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFEEF1F5)))),
         contentAlignment = Alignment.Center,
     ) {
-        if (shortcut.id == "apps") {
-            FourColorGrid(Modifier.size(42.dp))
-        } else {
-            Box {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (shortcut.id == "apps") {
+                FourColorGrid(Modifier.size(30.dp))
+            } else {
                 Icon(
                     painter = painterResource(shortcut.iconRes),
                     contentDescription = null,
-                    tint = Color.Black.copy(alpha = 0.12f),
-                    modifier = Modifier.offset(y = 1.dp).size(42.dp),
-                )
-                Icon(
-                    painter = painterResource(shortcut.iconRes),
-                    contentDescription = shortcut.label,
                     tint = shortcut.gradient.last(),
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(32.dp)
                         .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                         .drawWithContent {
                             drawContent()
@@ -1094,6 +1398,14 @@ private fun ShortcutArtwork(shortcut: SystemShortcut) {
                         },
                 )
             }
+            Spacer(Modifier.width(9.dp))
+            Text(
+                shortcut.label,
+                color = Color(0xFF3C4043), // Google's dark grey, as on the Play Store banner
+                fontSize = if (shortcut.label.length <= 3) 17.sp else 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -1142,6 +1454,7 @@ private fun rememberTileAccent(tile: Tile?): Color? = remember(tile?.key) {
         null -> null
         is Tile.Shortcut -> tile.shortcut.gradient.first()
         Tile.WeatherTile -> null
+        Tile.SystemFolder -> Color(0xFF8E99AB)
         is Tile.App -> (tile.app.banner ?: tile.app.icon)?.let(::dominantColor)
             ?: placeholderGradient(tile.app.label).first()
     }
@@ -1184,9 +1497,11 @@ private fun dominantColor(drawable: Drawable): Color? = runCatching {
 private fun rememberBitmap(drawable: Drawable?): ImageBitmap? = remember(drawable) {
     drawable?.let {
         runCatching {
-            val w = it.intrinsicWidth.takeIf { v -> v > 0 } ?: 320
-            val h = it.intrinsicHeight.takeIf { v -> v > 0 } ?: 180
-            it.toBitmap(w, h).asImageBitmap()
+            // A tile is ~250x150 px on a 1080p TV; cap the bitmap there (some apps ship 4K banners).
+            val w0 = it.intrinsicWidth.takeIf { v -> v > 0 } ?: 320
+            val h0 = it.intrinsicHeight.takeIf { v -> v > 0 } ?: 180
+            val k = minOf(1f, 320f / w0, 320f / h0)
+            it.toBitmap((w0 * k).toInt().coerceAtLeast(1), (h0 * k).toInt().coerceAtLeast(1)).asImageBitmap()
         }.getOrNull()
     }
 }

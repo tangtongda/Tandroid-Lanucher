@@ -20,6 +20,16 @@ import com.tangtongda.tlauncher.data.AppStoreRepository
 import com.tangtongda.tlauncher.data.CatalogApp
 import com.tangtongda.tlauncher.data.StoreState
 import com.tangtongda.tlauncher.data.appCatalog
+import com.tangtongda.tlauncher.data.networkAvailable
+import com.tangtongda.tlauncher.data.isFolderCandidate
+import com.tangtongda.tlauncher.data.tvBrand
+import com.tangtongda.tlauncher.data.TvBrand
+import com.tangtongda.tlauncher.data.HdmiInput
+import com.tangtongda.tlauncher.data.HdmiRepository
+import com.tangtongda.tlauncher.BuildConfig
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -65,7 +75,102 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, defaultShortcuts)
 
+    // ---------- HDMI ----------
+
+    private val hdmiRepo = HdmiRepository(app)
+    private val _hdmiPrompt = MutableStateFlow<HdmiInput?>(null)
+
+    /** "HDMI 2 已连接，要切换过去吗？" — shown while non-null. */
+    val hdmiPrompt: StateFlow<HdmiInput?> = _hdmiPrompt.asStateFlow()
+    private var hdmiExpiry: Job? = null
+    private var lastHdmi: Pair<String, Long>? = null
+
+    init {
+        viewModelScope.launch {
+            hdmiRepo.connections().collect { input ->
+                // Plugging in can fire several events in a row: ask once per input per 10 s.
+                val now = System.currentTimeMillis()
+                val last = lastHdmi
+                if (last != null && last.first == input.id && now - last.second < 10_000) return@collect
+                lastHdmi = input.id to now
+                showHdmiPrompt(input)
+            }
+        }
+        // Emulator has no HDMI: with debug.demoApps=true, fake a prompt shortly after start.
+        if (BuildConfig.DEBUG && BuildConfig.DEMO_APPS) {
+            viewModelScope.launch {
+                // A different input on each launch, to see every icon.
+                val prefs = getApplication<Application>().getSharedPreferences("debug", Context.MODE_PRIVATE)
+                val n = prefs.getInt("fake_hdmi", 0)
+                prefs.edit().putInt("fake_hdmi", n + 1).apply()
+                delay(8_000)
+                showHdmiPrompt(
+                    when (n % 5) {
+                        0 -> HdmiInput("debug.fake.hdmi2", "HDMI 2（模拟）")
+                        1 -> HdmiInput("debug.fake.hdmi3", "PlayStation 5（模拟）")
+                        2 -> HdmiInput("debug.fake.hdmi4", "Xbox Series X（模拟）")
+                        3 -> HdmiInput("debug.fake.hdmi1", "MacBook Pro（模拟）")
+                        else -> HdmiInput("debug.fake.hdmi1", "Windows 电脑（模拟）")
+                    },
+                )
+            }
+        }
+    }
+
+    private fun showHdmiPrompt(input: HdmiInput) {
+        _hdmiPrompt.value = input
+        // Don't leave a stale question around (e.g. it arrived while another app was in front).
+        hdmiExpiry?.cancel()
+        hdmiExpiry = viewModelScope.launch {
+            delay(30_000)
+            if (_hdmiPrompt.value == input) _hdmiPrompt.value = null
+        }
+    }
+
+    fun dismissHdmi() {
+        _hdmiPrompt.value = null
+    }
+
+    fun switchToHdmi() {
+        val input = _hdmiPrompt.value ?: return
+        _hdmiPrompt.value = null
+        if (!hdmiRepo.switchTo(input)) repo.launchLiveTv() // fall back to the TV app's own input screen
+    }
+
+    // ---------- 系统应用 folder ----------
+
+    private val folderPrefs = app.getSharedPreferences("system_folder", Context.MODE_PRIVATE)
+    private val _folderIn = MutableStateFlow(folderPrefs.getStringSet("in", emptySet()).orEmpty().toSet())
+    private val _folderOut = MutableStateFlow(folderPrefs.getStringSet("out", emptySet()).orEmpty().toSet())
+
+    /** "SONY", "Hisense", "TCL"… and its logo, shown on the folder tile. */
+    val brand: TvBrand = tvBrand()
+
+    /** Pre-installed extras (plus anything the user moved in), minus what the user moved out. */
+    val folderApps: StateFlow<List<AppInfo>> = combine(apps, _folderIn, _folderOut) { list, moveIn, moveOut ->
+        list.orEmpty().filter { a ->
+            a.packageName in moveIn || (a.packageName !in moveOut && isFolderCandidate(a, repo.settingsPackage))
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** What the home grid shows: everything except the folder's contents. null = still loading. */
+    val homeApps: StateFlow<List<AppInfo>?> = combine(apps, folderApps) { list, folder ->
+        val hidden = folder.mapTo(HashSet()) { it.packageName }
+        list?.filter { it.packageName !in hidden }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun setInFolder(app: AppInfo, inFolder: Boolean) {
+        val pkg = app.packageName
+        _folderIn.value = if (inFolder) _folderIn.value + pkg else _folderIn.value - pkg
+        _folderOut.value = if (inFolder) _folderOut.value - pkg else _folderOut.value + pkg
+        folderPrefs.edit().putStringSet("in", _folderIn.value).putStringSet("out", _folderOut.value).apply()
+    }
+
     private val backdropRepo = BackdropRepository(app)
+
+    /** Internet up? The launcher starts at boot, usually before the network: re-fetch when it comes up. */
+    private val online: StateFlow<Boolean> = app.networkAvailable()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     /**
      * Hero images per package name, resolved per app (own feed → its TMDB streaming service →
@@ -74,8 +179,10 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     @OptIn(ExperimentalCoroutinesApi::class)
     val backdrops: StateFlow<Map<String, List<Backdrop>>> = combine(
         apps.filterNotNull(),
-        flow { while (true) { emit(Unit); delay(2 * 60 * 60 * 1000L) } }, // refresh every 2 h
-    ) { list, _ -> list }
+        // Re-check every 3 min: cheap (results are cached 2 h), and apps that got nothing are retried.
+        flow { while (true) { emit(Unit); delay(3 * 60 * 1000L) } },
+        online.onEach { if (it) backdropRepo.forgetEmpty() },
+    ) { list, _, _ -> list }
         .mapLatest { list ->
             coroutineScope {
                 list.map { app -> async { app.packageName to backdropRepo.forApp(app) } }
@@ -108,14 +215,35 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val weatherRepo = WeatherRepository(app)
 
     /** Current weather for the nav bar, refreshed every 30 min (keeps the last value on failure). */
-    val weather: StateFlow<Weather?> = flow {
-        var last: Weather? = null
-        while (true) {
-            weatherRepo.load()?.let { last = it }
-            emit(last)
-            delay(30 * 60 * 1000L)
+    private var lastWeather: Weather? = null
+
+    private val weatherPrefs = app.getSharedPreferences("weather", Context.MODE_PRIVATE)
+    private val _weatherCity = MutableStateFlow(weatherPrefs.getString("city", null))
+
+    /** City picked on the TV; null = automatic (IP location / local.properties). */
+    val weatherCity: StateFlow<String?> = _weatherCity.asStateFlow()
+
+    fun setWeatherCity(city: String?) {
+        if (city == _weatherCity.value) return
+        weatherPrefs.edit().putString("city", city).apply()
+        lastWeather = null // don't keep showing the old city while the new one loads
+        _weatherCity.value = city
+    }
+
+    /** Current weather, refreshed every 30 min; retried every minute while it fails, and as soon as the network is back. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val weather: StateFlow<Weather?> = combine(online.filter { it }, _weatherCity) { _, city -> city }
+        .flatMapLatest { city ->
+            flow {
+                while (true) {
+                    val w = weatherRepo.load(city)
+                    if (w != null) lastWeather = w
+                    emit(lastWeather)
+                    delay(if (w == null) 60_000L else 30 * 60 * 1000L)
+                }
+            }
         }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // ---------- 媒体库 ----------
 

@@ -31,14 +31,20 @@ data class Weather(
     val isDay: Boolean,
     val hourly: List<HourForecast>,
     val daily: List<DayForecast>,
+    /** Attribution line shown in the detail view. */
+    val source: String = "Weather data by Open-Meteo.com",
 )
 
 /**
- * Weather from Open-Meteo (free, no API key; data CC BY 4.0, "Weather data by Open-Meteo.com").
+ * Two free, key-less providers, so one being blocked or down doesn't leave the tile empty:
  *
- * Location, in order: `weather.lat`/`weather.lon`, or `weather.city` (Open-Meteo geocoding), from
- * local.properties; otherwise the TV's approximate location from its public IP (ipwho.is).
- * Cached 30 min; if a refresh fails the last weather keeps being shown.
+ * - Open-Meteo (data CC BY 4.0, "Weather data by Open-Meteo.com"): current + hourly + 7 days.
+ * - 中国气象局 weather.cma.cn: reachable on mainland networks, locates the TV by its IP, and
+ *   gives current + 7 days (no hourly).
+ *
+ * Location: `weather.lat`/`weather.lon` or `weather.city` from local.properties; otherwise the
+ * TV's IP location, from CMA (works in China) or ipwho.is (elsewhere).
+ * Order: Open-Meteo for the place → CMA → nothing. Cached 30 min; stale data on failure.
  */
 class WeatherRepository(context: Context) {
 
@@ -46,18 +52,133 @@ class WeatherRepository(context: Context) {
 
     private data class Place(val lat: Double, val lon: Double, val name: String)
 
-    suspend fun load(): Weather? = withContext(Dispatchers.IO) {
-        runCatching {
-            val place = place() ?: return@runCatching null
-            val url = "https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}" +
-                "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day" +
-                "&hourly=temperature_2m,weather_code,is_day" +
-                "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
-                "&timezone=auto&forecast_days=7"
-            val json = cache.get("weather2:${place.lat},${place.lon}", ttlMs = 30 * 60 * 1000L) { httpGet(url) }
-                ?: return@runCatching null
-            parse(JSONObject(json), place.name)
-        }.onFailure { Log.w("Weather", "load failed: ${it.message}") }.getOrNull()
+    /**
+     * @param city picked on the TV (天气 → 切换城市), or null for automatic. A picked city is looked
+     * up as a CMA station (works in China), else geocoded by Open-Meteo (works elsewhere).
+     */
+    suspend fun load(city: String? = null): Weather? = withContext(Dispatchers.IO) {
+        if (city.isNullOrBlank()) auto() else forCity(city)
+    }
+
+    private fun forCity(city: String): Weather? {
+        val station = runCatching { cmaStation(city) }.onFailure { Log.w(TAG, "cma station: ${it.message}") }.getOrNull()
+        val cma = station?.let { id -> runCatching { cmaRaw(id) }.onFailure { Log.w(TAG, "cma: ${it.message}") }.getOrNull() }
+        val place = cma?.let { placeFromCma(it)?.copy(name = city) }
+            ?: runCatching { geocode(city) }.getOrNull()
+        return place?.let { p -> runCatching { openMeteo(p) }.onFailure { Log.w(TAG, "open-meteo: ${it.message}") }.getOrNull() }
+            ?: cma?.let { runCatching { parseCma(it).copy(city = city) }.getOrNull() }
+            ?: null.also { Log.w(TAG, "no weather for $city") }
+    }
+
+    private fun auto(): Weather? {
+        val configured = configuredPlace()
+        // Auto-location: CMA first; it is the provider most likely to work on a Chinese network
+        // and also tells us where we are (city + coordinates) for Open-Meteo.
+        val cma = if (configured == null) runCatching { cmaRaw() }.onFailure { Log.w(TAG, "cma: ${it.message}") }.getOrNull() else null
+        val place = configured
+            ?: cma?.let { placeFromCma(it) }
+            ?: runCatching { ipPlace() }.getOrNull()
+        return place?.let { p -> runCatching { openMeteo(p) }.onFailure { Log.w(TAG, "open-meteo: ${it.message}") }.getOrNull() }
+            ?: runCatching { parseCma(cma ?: cmaRaw()) }.onFailure { Log.w(TAG, "cma fallback: ${it.message}") }.getOrNull()
+            ?: null.also { Log.w(TAG, "no weather provider reachable") }
+    }
+
+    /** CMA station id for a city name ("58457|杭州|Hangzhou|中国" → 58457); exact name match preferred. */
+    private fun cmaStation(city: String): String? {
+        val q = URLEncoder.encode(city, "UTF-8")
+        val json = cache.get("cma:ac:$city", ttlMs = 30L * 24 * 60 * 60 * 1000) {
+            httpGet("https://weather.cma.cn/api/autocomplete?q=$q&limit=10", mapOf("User-Agent" to "Mozilla/5.0", "Referer" to "https://weather.cma.cn/"))
+        } ?: return null
+        val list = JSONObject(json).optJSONArray("data") ?: return null
+        val rows = (0 until list.length()).map { list.optString(it).split('|') }.filter { it.size >= 2 }
+        return (rows.firstOrNull { it[1] == city } ?: rows.firstOrNull())?.get(0)
+    }
+
+    private fun openMeteo(place: Place): Weather? {
+        val url = "https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}" +
+            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day" +
+            "&hourly=temperature_2m,weather_code,is_day" +
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+            "&timezone=auto&forecast_days=7"
+        val json = cache.get("weather2:${place.lat},${place.lon}", ttlMs = 30 * 60 * 1000L) { httpGet(url) }
+            ?: return null
+        return parse(JSONObject(json), place.name)
+    }
+
+    // ---------- 中国气象局 ----------
+
+    /** Without a station id the API answers for the caller's IP location. */
+    private fun cmaRaw(stationId: String? = null): JSONObject {
+        val query = stationId?.let { "?stationid=$it" }.orEmpty()
+        val json = cache.get("cma:view$query", ttlMs = 30 * 60 * 1000L) {
+            httpGet("https://weather.cma.cn/api/weather/view$query", mapOf("User-Agent" to "Mozilla/5.0", "Referer" to "https://weather.cma.cn/"))
+        } ?: error("no data")
+        val root = JSONObject(json)
+        if (root.optInt("code", -1) != 0) error("code ${root.optInt("code")}")
+        return root.getJSONObject("data")
+    }
+
+    private fun placeFromCma(data: JSONObject): Place? {
+        val loc = data.optJSONObject("location") ?: return null
+        val lat = loc.optDouble("latitude")
+        val lon = loc.optDouble("longitude")
+        if (lat.isNaN() || lon.isNaN()) return null
+        return Place(lat, lon, loc.optString("name"))
+    }
+
+    private fun parseCma(data: JSONObject): Weather {
+        val now = data.getJSONObject("now")
+        val days = data.optJSONArray("daily")
+        val hour = java.time.LocalTime.now().hour
+        val isDay = hour in 6..17
+        val today = days?.optJSONObject(0)
+        val code = today?.optInt(if (isDay) "dayCode" else "nightCode", 9999) ?: 9999
+        val text = today?.optString(if (isDay) "dayText" else "nightText").orEmpty()
+        val kind = cmaKind(code)
+        val daily = (0 until (days?.length() ?: 0)).map { i ->
+            val d = days!!.getJSONObject(i)
+            val date = runCatching { LocalDate.parse(d.getString("date").replace('/', '-')) }.getOrNull()
+            DayForecast(
+                label = when (i) {
+                    0 -> "今天"
+                    1 -> "明天"
+                    else -> date?.let { weekday(it.dayOfWeek) } ?: ""
+                },
+                high = d.optDouble("high").roundToInt(),
+                low = d.optDouble("low").roundToInt(),
+                emoji = emojiOf(cmaKind(d.optInt("dayCode", 9999)), true),
+                rainChance = null,
+            )
+        }
+        return Weather(
+            city = data.optJSONObject("location")?.optString("name").orEmpty(),
+            temperature = now.getDouble("temperature").roundToInt(),
+            feelsLike = now.optDouble("feelst").takeIf { !it.isNaN() && it < 999 }?.roundToInt(),
+            humidity = now.optDouble("humidity").takeIf { !it.isNaN() && it < 999 }?.roundToInt(),
+            windKmh = now.optDouble("windSpeed").takeIf { !it.isNaN() && it < 999 }?.let { (it * 3.6).roundToInt() },
+            high = daily.firstOrNull()?.high,
+            low = daily.firstOrNull()?.low,
+            description = text.ifBlank { textOf(kind) },
+            emoji = emojiOf(kind, isDay),
+            kind = kind,
+            isDay = isDay,
+            hourly = emptyList(),
+            daily = daily,
+            source = "数据来源：中国气象局",
+        )
+    }
+
+    /** CMA / 中国天气 phenomenon codes. */
+    private fun cmaKind(code: Int): WeatherKind = when (code) {
+        0 -> WeatherKind.Clear
+        1 -> WeatherKind.PartlyCloudy
+        2 -> WeatherKind.Cloudy
+        4, 5 -> WeatherKind.Thunder
+        7 -> WeatherKind.Drizzle
+        3, 8, 9, 10, 11, 12, 19, 21, 22, 23, 24, 25, 301 -> WeatherKind.Rain
+        6, 13, 14, 15, 16, 17, 26, 27, 28, 302 -> WeatherKind.Snow
+        18, 20, 29, 30, 31, 32, 49, 53, 54, 55, 56, 57, 58 -> WeatherKind.Fog
+        else -> WeatherKind.Cloudy
     }
 
     private fun parse(root: JSONObject, city: String): Weather {
@@ -122,27 +243,35 @@ class WeatherRepository(context: Context) {
         )
     }
 
-    private fun place(): Place? {
+    /** From local.properties, or null for automatic (IP) location. */
+    private fun configuredPlace(): Place? = runCatching {
         val lat = BuildConfig.WEATHER_LAT.toDoubleOrNull()
         val lon = BuildConfig.WEATHER_LON.toDoubleOrNull()
         val city = BuildConfig.WEATHER_CITY
-        if (lat != null && lon != null) return Place(lat, lon, city)
+        if (lat != null && lon != null) return@runCatching Place(lat, lon, city)
+        if (city.isBlank()) null else geocode(city)
+    }.getOrNull()
 
-        if (city.isNotBlank()) {
-            val q = URLEncoder.encode(city, "UTF-8")
-            val json = cache.get("geo:$city", ttlMs = 30L * 24 * 60 * 60 * 1000) {
-                httpGet("https://geocoding-api.open-meteo.com/v1/search?name=$q&count=1&language=zh")
-            } ?: return null
-            val r = JSONObject(json).optJSONArray("results")?.optJSONObject(0) ?: return null
-            return Place(r.getDouble("latitude"), r.getDouble("longitude"), r.optString("name", city))
-        }
+    private fun geocode(city: String): Place? {
+        val q = URLEncoder.encode(city, "UTF-8")
+        val json = cache.get("geo:$city", ttlMs = 30L * 24 * 60 * 60 * 1000) {
+            httpGet("https://geocoding-api.open-meteo.com/v1/search?name=$q&count=1&language=zh")
+        } ?: return null
+        val r = JSONObject(json).optJSONArray("results")?.optJSONObject(0) ?: return null
+        return Place(r.getDouble("latitude"), r.getDouble("longitude"), city)
+    }
 
+    private fun ipPlace(): Place? {
         // Approximate location from the public IP (city level), refreshed daily.
         val json = cache.get("ipgeo", ttlMs = 24 * 60 * 60 * 1000L) { httpGet("https://ipwho.is/?lang=zh-CN") }
             ?: return null
         val r = JSONObject(json)
         if (!r.optBoolean("success", false)) return null
         return Place(r.getDouble("latitude"), r.getDouble("longitude"), r.optString("city"))
+    }
+
+    private companion object {
+        const val TAG = "Weather"
     }
 
     /** WMO weather interpretation codes. */

@@ -27,8 +27,8 @@ android {
         applicationId = "com.tangtongda.tlauncher"
         minSdk = 29          // Sony A80J: Google TV / Android 10
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 5
+        versionName = "0.5.0"
 
         buildConfigField("String", "TMDB_TOKEN", "\"${localProp("tmdb.token")}\"")
         buildConfigField("String", "TMDB_API_BASE", "\"${localProp("tmdb.apiBase", "https://api.themoviedb.org/3/")}\"")
@@ -38,12 +38,23 @@ android {
         buildConfigField("String", "WEATHER_CITY", "\"${localProp("weather.city")}\"")
         buildConfigField("String", "WEATHER_LAT", "\"${localProp("weather.lat")}\"")
         buildConfigField("String", "WEATHER_LON", "\"${localProp("weather.lon")}\"")
-        buildConfigField("boolean", "DEMO_APPS", localProp("debug.demoApps", "false").toBoolean().toString())
     }
 
     buildTypes {
+        // Run ▶ in Android Studio = debug: the debug.* switches from local.properties apply.
+        debug {
+            buildConfigField("boolean", "DEMO_APPS", localProp("debug.demoApps", "false").toBoolean().toString())
+            // Pretend to be another TV brand (sony, hisense, tcl, xiaomi, samsung, lg, philips, sharp, skyworth, google)
+            buildConfigField("String", "DEBUG_TV_BRAND", "\"${localProp("debug.tvBrand")}\"")
+        }
+        // ./gradlew assembleRelease = the APK to install / share: test switches are always off,
+        // whatever local.properties says. Signed with the local debug key so it installs over
+        // earlier builds (same signature) without setting up a release keystore.
         release {
+            buildConfigField("boolean", "DEMO_APPS", "false")
+            buildConfigField("String", "DEBUG_TV_BRAND", "\"\"")
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

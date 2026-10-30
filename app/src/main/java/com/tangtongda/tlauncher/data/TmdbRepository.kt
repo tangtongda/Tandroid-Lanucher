@@ -10,28 +10,49 @@ class TmdbClient(private val cache: JsonCache) {
 
     val enabled: Boolean get() = BuildConfig.TMDB_TOKEN.isNotBlank()
 
+    /** Configured base first, then TMDB's alternate API domain (often reachable when the main one isn't). */
+    private val bases = listOf(BuildConfig.TMDB_API_BASE, "https://api.tmdb.org/3/")
+        .map { if (it.endsWith("/")) it else "$it/" }
+        .distinct()
+
+    /** After every base failed, skip TMDB for a while instead of waiting for timeouts on each call. */
+    @Volatile private var downUntil = 0L
+
     fun get(pathAndQuery: String, ttlMs: Long = 2 * 60 * 60 * 1000L): JSONObject? { // 2 h, same as images
         if (!enabled) return null
-        val json = cache.get("tmdb:$pathAndQuery", ttlMs) {
-            httpGet(
-                BuildConfig.TMDB_API_BASE + pathAndQuery,
-                mapOf(
-                    "Authorization" to "Bearer ${BuildConfig.TMDB_TOKEN}",
-                    "Accept" to "application/json",
-                ),
-            )
+        val json = cache.get("tmdb:$pathAndQuery", ttlMs) fetch@{
+            if (System.currentTimeMillis() < downUntil) error("TMDB unreachable, retry later")
+            var last: Throwable? = null
+            for (base in bases) {
+                try {
+                    return@fetch httpGet(
+                        base + pathAndQuery,
+                        mapOf(
+                            "Authorization" to "Bearer ${BuildConfig.TMDB_TOKEN}",
+                            "Accept" to "application/json",
+                        ),
+                    )
+                } catch (e: Exception) {
+                    last = e
+                }
+            }
+            downUntil = System.currentTimeMillis() + 5 * 60 * 1000L
+            throw last ?: IllegalStateException("TMDB unreachable")
         } ?: return null
         return runCatching { JSONObject(json) }.getOrNull()
     }
 
-    /** Turn a TMDB "results" array into backdrops (w1280 is plenty for a 1080p TV). */
+    /**
+     * Turn a TMDB "results" array into backdrops. "original" (1920 or 3840 px wide): w1280 looked
+     * soft stretched across a 65" panel. Coil decodes it down to the screen size, so memory is the same.
+     */
     fun backdrops(results: JSONArray?, caption: String): List<Backdrop> {
         if (results == null) return emptyList()
         return (0 until results.length()).mapNotNull { i ->
             val item = results.getJSONObject(i)
             val path = item.optString("backdrop_path").takeIf { it.startsWith("/") } ?: return@mapNotNull null
             val title = item.optString("title").ifBlank { item.optString("name") }
-            Backdrop(title, BuildConfig.TMDB_IMAGE_BASE + "w1280" + path, caption, isTmdb = true)
+            Backdrop(title, BuildConfig.TMDB_IMAGE_BASE + "original" + path, caption, isTmdb = true)
         }
     }
 }
@@ -112,6 +133,31 @@ class TmdbProviderSource(private val tmdb: TmdbClient) : BackdropSource {
 
 }
 
+/** Words in a package name or label that mark a video / streaming app (incl. Chinese TV editions). */
+private val videoAppHint = Regex(
+    "netflix|disney|amazonvideo|prime ?video|hbo|iqiyi|qiyi|gitv|爱奇艺|奇异果|ktcp|qqlive|wetv|腾讯视频|云视听|" +
+        "youku|优酷|酷喵|hunantv|mgtv|芒果|cibn|bestv|百视通|华数|wasu|咪咕|migu|sohu|搜狐视频|pptv|letv|乐视|" +
+        "kodi|xbmc|plex|jellyfin|emby|vlc|stremio|影视|视频|video|movie|player",
+    RegexOption.IGNORE_CASE,
+)
+
+private val knownVideoApps = setOf(
+    "com.plexapp.android",
+    "org.xbmc.kodi",
+    "org.jellyfin.androidtv",
+    "org.videolan.vlc",
+    "com.stremio.one",
+    "com.google.android.videos",
+)
+
+/**
+ * Video app = Android says so (category VIDEO / handles video/\*), or a known player, or its name
+ * says so. Some TV editions (奇异果, 云视听极光…) declare neither, so the name check matters.
+ */
+fun looksLikeVideoApp(app: AppInfo): Boolean =
+    app.isVideo || app.packageName in knownVideoApps ||
+        videoAppHint.containsMatchIn(app.packageName) || videoAppHint.containsMatchIn(app.label)
+
 /** a1, b1, a2, b2… so mixed feeds alternate between TV and movies. */
 fun <T> interleave(a: List<T>, b: List<T>): List<T> =
     (0 until maxOf(a.size, b.size)).flatMap { listOfNotNull(a.getOrNull(it), b.getOrNull(it)) }
@@ -123,17 +169,8 @@ fun <T> interleave(a: List<T>, b: List<T>): List<T> =
  */
 class TmdbTrendingSource(private val tmdb: TmdbClient) : BackdropSource {
 
-    private val knownVideoApps = setOf(
-        "com.plexapp.android",
-        "org.xbmc.kodi",
-        "org.jellyfin.androidtv",
-        "org.videolan.vlc",
-        "com.stremio.one",
-        "com.google.android.videos",
-    )
-
     override suspend fun load(app: AppInfo): List<Backdrop>? {
-        if (!app.isVideo && app.packageName !in knownVideoApps) return null
+        if (!looksLikeVideoApp(app)) return null
         val trending = tmdb.backdrops(tmdb.get("trending/all/week?language=zh-CN")?.optJSONArray("results"), "本周热门")
         val tv = tmdb.backdrops(tmdb.get("tv/popular?language=zh-CN")?.optJSONArray("results"), "热门剧集")
         val movies = tmdb.backdrops(tmdb.get("movie/popular?language=zh-CN")?.optJSONArray("results"), "热门电影")
