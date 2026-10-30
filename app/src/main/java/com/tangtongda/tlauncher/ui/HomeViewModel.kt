@@ -329,6 +329,12 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                                 try {
                                     val f = store.download(item, candidate) { p, bytes -> setStore(item.id, StoreState.Downloading(p, bytes)) }
                                     if (!store.verify(f, sha)) error("安装包校验失败")
+                                    if (!store.fitsDevice(f)) {
+                                        // e.g. BBLL's official build is 32-bit only: no point
+                                        // trying proxies for the same file, go to the next source.
+                                        lastError = IllegalStateException("这个版本不支持本机的 CPU 架构")
+                                        break
+                                    }
                                     downloaded = f
                                     break
                                 } catch (e: kotlinx.coroutines.CancellationException) {

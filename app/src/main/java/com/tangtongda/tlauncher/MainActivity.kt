@@ -34,6 +34,8 @@ class MainActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
 
+        com.tangtongda.tlauncher.ui.UiSounds.warmUp(this)
+
         setContent {
             TLauncherTheme {
                 // The UI is designed for a 1080p TV: 960×540dp. Phones, tablets and TVs with an

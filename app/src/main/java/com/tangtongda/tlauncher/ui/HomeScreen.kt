@@ -314,7 +314,11 @@ fun HomeContent(
         tab = HomeTab.Home
         homeRequest++
     }
-    BackHandler(enabled = moving != null) { finishMove() }
+    val soundContext = LocalContext.current
+    BackHandler(enabled = moving != null) {
+        UiSounds.click(soundContext) // dropping the tile, same sound as dropping it with OK
+        finishMove()
+    }
     BackHandler(enabled = moving == null && menuFor == null && !showWeather && !showFolder) { goHome() }
     LaunchedEffect(Unit) { HomeEvents.goHome.collect { if (moving == null) goHome() } }
     // Default focus once on open (FOCUS-06); not again when switching tabs.
@@ -1149,6 +1153,11 @@ private fun RowScope.HomeTile(tile: Tile, grid: GridCallbacks) {
             .focusRequester(grid.requester(tile))
             .onPreviewKeyEvent { event ->
                 if (!isMoving || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // Moving a tile keeps focus on it, so the usual "focus moved" sound never fires:
+                // play the direction sound here for each step (the screen recorded the key first).
+                if (event.key in listOf(Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown)) {
+                    UiSounds.focusMoved(context)
+                }
                 when (event.key) {
                     Key.DirectionLeft -> grid.onMove(-1)
                     Key.DirectionRight -> grid.onMove(1)

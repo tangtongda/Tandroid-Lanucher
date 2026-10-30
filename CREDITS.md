@@ -21,6 +21,11 @@ Tandroid Launcher 是个人、非商业项目。以下资源归各自所有者�
 
 - 其余图标（设置、HDMI 接口、游戏手柄、媒体库等）为本项目自绘。
 
+## 音效
+
+- 界面音效（`app/src/main/res/raw/ui_*.wav`）为本项目原创合成，未使用任何采样素材，
+  由 `tools/make_sounds.py` 生成，可自由修改。
+
 ## 数据与内容
 
 - 影视背景图与元数据：[TMDB](https://www.themoviedb.org)。This product uses the TMDB API but is not endorsed or certified by TMDB.

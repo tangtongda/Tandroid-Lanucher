@@ -297,6 +297,25 @@ class AppStoreRepository(private val context: Context) {
         file
     }
 
+    /**
+     * Can this device run the APK? An APK with native code ships it per CPU under lib/<abi>/; if
+     * none of those folders matches this device (e.g. a 32-bit-only build on a 64-bit-only
+     * emulator) the system installer would refuse it, so we skip to the next source instead.
+     * APKs without native code run anywhere.
+     */
+    suspend fun fitsDevice(file: File): Boolean = withContext(Dispatchers.IO) {
+        val abis = runCatching {
+            java.util.zip.ZipFile(file).use { zip ->
+                zip.entries().asSequence()
+                    .map { it.name }
+                    .filter { it.startsWith("lib/") && it.count { c -> c == '/' } >= 2 }
+                    .map { it.split('/')[1] }
+                    .toSet()
+            }
+        }.getOrDefault(emptySet())
+        abis.isEmpty() || Build.SUPPORTED_ABIS.any { it in abis }
+    }
+
     /** Compare against the SHA-256 GitHub publishes for the asset, when it does. */
     suspend fun verify(file: File, expectedSha256: String?): Boolean = withContext(Dispatchers.IO) {
         if (expectedSha256 == null) return@withContext true
