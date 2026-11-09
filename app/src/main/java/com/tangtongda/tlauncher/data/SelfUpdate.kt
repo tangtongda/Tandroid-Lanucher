@@ -40,6 +40,27 @@ class SelfUpdate(private val context: Context) {
 
     fun skip(release: Release) = prefs.edit().putString(KEY_SKIPPED, release.version).apply()
 
+    sealed interface CheckResult {
+        data object UpToDate : CheckResult
+        data class Available(val release: Release) : CheckResult
+        data class Failed(val message: String) : CheckResult
+    }
+
+    /** "检查更新" in our settings: always asks GitHub, ignores "跳过此版本", and says why when it can't. */
+    suspend fun checkNow(): CheckResult = withContext(Dispatchers.IO) {
+        runCatching { fetchLatest() }.fold(
+            onSuccess = { latest ->
+                prefs.edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
+                if (latest != null && compare(latest.version, BuildConfig.VERSION_NAME) > 0) {
+                    CheckResult.Available(latest)
+                } else {
+                    CheckResult.UpToDate
+                }
+            },
+            onFailure = { CheckResult.Failed("连不上 GitHub，请稍后再试") },
+        )
+    }
+
     private fun fetchLatest(): Release? {
         val headers = mapOf("Accept" to "application/vnd.github+json", "User-Agent" to "Tandroid-Launcher")
         val list = JSONArray(httpGet("https://api.github.com/repos/$REPO/releases?per_page=20", headers))

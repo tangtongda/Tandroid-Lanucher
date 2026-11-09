@@ -55,16 +55,21 @@ private sealed interface UpdateStep {
  * every 6 hours, see [SelfUpdate]) and offers to download and install the new APK.
  * Waits while the default-launcher prompt is up, so the two never stack.
  */
+/** The release the update prompt is offering; set by the periodic check or by 设置 → 检查更新. */
+object UpdateOffer {
+    var release by mutableStateOf<SelfUpdate.Release?>(null)
+}
+
 @Composable
 fun UpdatePrompt() {
     val context = LocalContext.current
     val updater = remember { SelfUpdate(context.applicationContext) }
     val scope = rememberCoroutineScope()
-    var release by remember { mutableStateOf<SelfUpdate.Release?>(null) }
+    var release by UpdateOffer::release
     var step by remember { mutableStateOf<UpdateStep>(UpdateStep.Offer) }
 
     LifecycleResumeEffect(Unit) {
-        if (release == null) scope.launch { release = updater.check() }
+        if (release == null) scope.launch { updater.check()?.let { if (release == null) release = it } }
         onPauseOrDispose { }
     }
 
@@ -74,7 +79,7 @@ fun UpdatePrompt() {
         DefaultHome.updatePromptVisible = show
         onDispose { DefaultHome.updatePromptVisible = false }
     }
-    if (!show || current == null) return
+    if (current == null || DefaultHome.homePromptShowing) return
 
     // Only a running download blocks closing; if the user backs out of the system installer, they can close or retry.
     val busy = step is UpdateStep.Downloading

@@ -58,16 +58,13 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
-     * Built-in tiles. When the TV's own Settings app is already in the app list (with its
-     * large banner), drop our Settings shortcut so it only appears once.
+     * Built-in tiles. "设置" is always ours (Tandroid's settings); the TV's own Settings app is
+     * kept off the grid instead (see [homeApps]) and reached through the gear at the top right.
      */
     val shortcuts: StateFlow<List<SystemShortcut>> = apps
-        .map { list ->
-            val settingsPkg = repo.settingsPackage
-            val hasSettingsApp = list.orEmpty().any { it.packageName == settingsPkg }
+        .map {
             defaultShortcuts.filter { shortcut ->
                 when (shortcut.id) {
-                    "settings" -> !hasSettingsApp
                     "stock_home" -> repo.hasStockHome // only when there is an original home to go back to
                     else -> true
                 }
@@ -153,10 +150,14 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** What the home grid shows: everything except the folder's contents. null = still loading. */
+    /**
+     * What the home grid shows: everything except the folder's contents and the system Settings
+     * app (the gear opens it; the "设置" tile is ours). null = still loading.
+     */
     val homeApps: StateFlow<List<AppInfo>?> = combine(apps, folderApps) { list, folder ->
         val hidden = folder.mapTo(HashSet()) { it.packageName }
-        list?.filter { it.packageName !in hidden }
+        val settingsPkg = repo.settingsPackage
+        list?.filter { it.packageName !in hidden && it.packageName != settingsPkg }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     fun setInFolder(app: AppInfo, inFolder: Boolean) {

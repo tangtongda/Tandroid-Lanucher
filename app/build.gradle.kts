@@ -1,3 +1,4 @@
+import java.time.LocalDate
 import java.util.Properties
 
 plugins {
@@ -27,9 +28,11 @@ android {
         applicationId = "com.tangtongda.tlauncher"
         minSdk = 29          // Sony A80J: Google TV / Android 10
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.7.0"
+        versionCode = 9
+        versionName = "0.7.1"
 
+        // Shown under 设置 → 关于.
+        buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
         buildConfigField("String", "TMDB_TOKEN", "\"${localProp("tmdb.token")}\"")
         buildConfigField("String", "TMDB_API_BASE", "\"${localProp("tmdb.apiBase", "https://api.themoviedb.org/3/")}\"")
         buildConfigField("String", "TMDB_IMAGE_BASE", "\"${localProp("tmdb.imageBase", "https://image.tmdb.org/t/p/")}\"")

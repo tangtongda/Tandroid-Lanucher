@@ -20,6 +20,9 @@ data class SystemShortcut(
     val tinted: Boolean = true,
 )
 
+/** Pseudo action: open Tandroid's own settings panel (handled in HomeRoute). */
+const val ACTION_LAUNCHER_SETTINGS = "com.tangtongda.tlauncher.action.LAUNCHER_SETTINGS"
+
 /** Pseudo action: open the TV's original home screen (handled by AppRepository, not an Intent action). */
 const val ACTION_STOCK_HOME = "com.tangtongda.tlauncher.action.STOCK_HOME"
 
@@ -31,7 +34,7 @@ val defaultShortcuts = listOf(
     ),
     SystemShortcut(
         id = "settings", label = "设置", iconRes = R.drawable.ic_sys_settings,
-        action = Settings.ACTION_SETTINGS,
+        action = ACTION_LAUNCHER_SETTINGS, // our own settings; the gear at the top right opens the system ones
         gradient = listOf(Color(0xFF9AA4B2), Color(0xFF5B8DEF), Color(0xFF4B5563)), // grey with a blue sheen
     ),
     SystemShortcut(

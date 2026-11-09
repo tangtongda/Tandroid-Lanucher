@@ -204,6 +204,7 @@ fun HomeRoute(vm: HomeViewModel = viewModel()) {
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val storeState by vm.storeState.collectAsStateWithLifecycle()
     val hdmiPrompt by vm.hdmiPrompt.collectAsStateWithLifecycle()
+    var showSettings by remember { mutableStateOf(false) }
     val askMediaPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         vm.onMediaPermissionResult()
     }
@@ -211,7 +212,10 @@ fun HomeRoute(vm: HomeViewModel = viewModel()) {
         apps = apps,
         onAppClick = vm::launch,
         shortcuts = shortcuts,
-        onShortcutClick = vm::launchShortcut,
+        onShortcutClick = { shortcut ->
+            if (shortcut.action == com.tangtongda.tlauncher.data.ACTION_LAUNCHER_SETTINGS) showSettings = true
+            else vm.launchShortcut(shortcut)
+        },
         backdrops = backdrops,
         order = order,
         onOrderChange = vm::saveOrder,
@@ -230,9 +234,10 @@ fun HomeRoute(vm: HomeViewModel = viewModel()) {
         catalog = catalog,
         storeState = storeState,
         onInstallCatalog = vm::installCatalog,
-        onSettings = vm::openSettings,
+        onSettings = vm::openSettings, // gear = system settings; the 设置 tile opens ours
     )
-    hdmiPrompt?.takeIf { !DefaultHome.promptVisible }?.let { input ->
+    if (showSettings) LauncherSettingsDialog(onDismiss = { showSettings = false })
+    hdmiPrompt?.takeIf { !DefaultHome.promptVisible && !showSettings }?.let { input ->
         HdmiPromptDialog(input = input, onSwitch = vm::switchToHdmi, onDismiss = vm::dismissHdmi)
     }
 }
