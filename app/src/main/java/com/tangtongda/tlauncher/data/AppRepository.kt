@@ -51,6 +51,7 @@ class AppRepository(private val context: Context) {
     /** Jump back to the original home screen; returns false if there isn't one. */
     fun launchStockHome(): Boolean {
         val ai = stockHome ?: return false
+        com.tangtongda.tlauncher.HomeOverride.allowStockHomeBriefly() // don't let the Home-button service bounce us back
         val intent = Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .setClassName(ai.packageName, ai.name)

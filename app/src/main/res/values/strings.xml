@@ -3,4 +3,6 @@
     <string name="section_apps">应用</string>
     <string name="section_system">系统</string>
     <string name="empty_apps">没有找到可启动的应用</string>
+    <string name="home_service_label">Tandroid Launcher 主页键</string>
+    <string name="home_service_desc">开启后，按遥控器的主页键会打开 Tandroid Launcher，而不是电视自带的桌面。只检测当前在前台的是哪个应用，不读取屏幕内容，也不记录按键。</string>
 </resources>

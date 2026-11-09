@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Drawables looked up by name with getIdentifier() (brand folder banners, system shortcut
+     banners, HDMI input logos): tell the resource shrinker to keep them. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/banner_brand_*,@drawable/banner_sys_*,@drawable/ic_input_*,@drawable/ic8_*,@raw/ui_*" />

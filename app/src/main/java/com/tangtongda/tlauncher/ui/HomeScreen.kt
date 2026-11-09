@@ -232,7 +232,7 @@ fun HomeRoute(vm: HomeViewModel = viewModel()) {
         onInstallCatalog = vm::installCatalog,
         onSettings = vm::openSettings,
     )
-    hdmiPrompt?.let { input ->
+    hdmiPrompt?.takeIf { !DefaultHome.promptVisible }?.let { input ->
         HdmiPromptDialog(input = input, onSwitch = vm::switchToHdmi, onDismiss = vm::dismissHdmi)
     }
 }

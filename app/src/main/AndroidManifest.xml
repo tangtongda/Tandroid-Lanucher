@@ -37,7 +37,7 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="audio/*" />
         </intent>
-        <!-- To find the original home screen for the "原桌面" tile -->
+        <!-- To find the original home screen ("原桌面" tile) and other launchers (Home-button service) -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
@@ -78,6 +78,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Home button on Google TV: turned on by the user in 设置 → 无障碍 (see HomeButtonService) -->
+        <service
+            android:name=".HomeButtonService"
+            android:exported="true"
+            android:label="@string/home_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/home_button_service" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

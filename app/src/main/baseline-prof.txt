@@ -1,0 +1,5 @@
+# Baseline profile for Tandroid Launcher: precompile all of our own code at install time
+# (profileinstaller applies it for sideloaded APKs). Compose / TV Material ship their own
+# profiles, which the build merges in automatically.
+HSPLcom/tangtongda/tlauncher/**;->**(**)**
+Lcom/tangtongda/tlauncher/**;

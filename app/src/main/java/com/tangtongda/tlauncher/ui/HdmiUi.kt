@@ -101,8 +101,12 @@ private fun InputIcon(label: String) {
     val logo = remember(kind) {
         kind.logo?.let { context.resources.getIdentifier(it, "drawable", context.packageName) } ?: 0
     }
+    // Brand logos are full colour (Icons8), so they sit on a white tile like the app cards do.
     Box(
-        Modifier.size(44.dp).background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
+        Modifier.size(44.dp).background(
+            if (logo != 0) Color.White else Color.White.copy(alpha = 0.12f),
+            RoundedCornerShape(12.dp),
+        ),
         contentAlignment = Alignment.Center,
     ) {
         if (logo != 0) {

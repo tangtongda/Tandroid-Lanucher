@@ -48,6 +48,8 @@ class MainActivity : ComponentActivity() {
                 val tv = if (longSidePx > 0f) Density(longSidePx / 960f, base.fontScale) else base
                 CompositionLocalProvider(LocalDensity provides tv) {
                     HomeRoute()
+                    com.tangtongda.tlauncher.ui.DefaultHomePrompt()
+                    com.tangtongda.tlauncher.ui.UpdatePrompt()
                 }
             }
         }

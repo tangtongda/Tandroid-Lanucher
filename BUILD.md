@@ -39,6 +39,22 @@ adb connect <电视IP>:5555
 adb install -r ~/Downloads/Tandroid-Launcher-<版本号>.apk   # -r 覆盖安装，保留排序、城市等设置
 ```
 
+## 发布新版本（电视上的「发现新版本」会自动提示）
+
+桌面每 6 小时检查一次本仓库的 GitHub Releases。只要 tag 是版本号（如 `v0.7.0`）、并且附带了 APK，
+比当前装的版本高，就会弹出「发现新版本」，一键下载安装。
+
+```bash
+# 1. app/build.gradle.kts 里 versionCode +1、versionName 改成新版本号
+./gradlew assembleRelease
+cp app/build/outputs/apk/release/app-release.apk ~/Downloads/Tandroid-Launcher-0.7.0.apk
+git tag v0.7.0 && git push --tags
+gh release create v0.7.0 ~/Downloads/Tandroid-Launcher-0.7.0.apk --title "0.7.0" --notes "更新说明（会显示在电视的弹窗里）"
+```
+
+> ⚠️ 一定在**同一台电脑**上打包：正式版用本机的调试签名，换一台电脑签名不同，电视无法覆盖更新
+> （弹窗会提示"签名不同"）。`store-apps` 那个 Release 不是版本号，不会被当成更新。
+
 ## 提交代码
 
 ```bash

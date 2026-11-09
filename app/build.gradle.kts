@@ -27,8 +27,8 @@ android {
         applicationId = "com.tangtongda.tlauncher"
         minSdk = 29          // Sony A80J: Google TV / Android 10
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 8
+        versionName = "0.7.0"
 
         buildConfigField("String", "TMDB_TOKEN", "\"${localProp("tmdb.token")}\"")
         buildConfigField("String", "TMDB_API_BASE", "\"${localProp("tmdb.apiBase", "https://api.themoviedb.org/3/")}\"")
@@ -53,7 +53,10 @@ android {
         release {
             buildConfigField("boolean", "DEMO_APPS", "false")
             buildConfigField("String", "DEBUG_TV_BRAND", "\"\"")
-            isMinifyEnabled = false
+            // R8: strips unused code and resources and optimises the rest. Smaller APK, faster
+            // start-up on slow TV CPUs. Resources looked up by name are kept in res/raw/keep.xml.
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -89,6 +92,9 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.tv.material)
     implementation(libs.coil.compose)
+    // Applies the baseline profiles (ours in src/main/baseline-prof.txt + Compose's own) when the
+    // APK is sideloaded, so hot code is precompiled instead of interpreted on first use.
+    implementation(libs.androidx.profileinstaller)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
