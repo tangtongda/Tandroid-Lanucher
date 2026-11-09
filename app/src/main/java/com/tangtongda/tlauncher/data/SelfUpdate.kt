@@ -15,9 +15,9 @@ import java.io.File
  * other releases (e.g. "store-apps", which only hosts recommended apps) are ignored. The newest
  * such version wins and is offered when it's higher than the installed [BuildConfig.VERSION_NAME].
  *
- * Downloads reuse the store's path: direct link → GitHub file proxies → SHA-256 check → system
- * installer. The APK must be signed with the same key as the installed copy, otherwise Android
- * refuses to update; that's checked before the installer opens so the user gets a clear message.
+ * Downloads reuse the store's path: direct link (15 s to start) → SHA-256 check → system
+ * installer; if GitHub can't be reached the prompt explains how to install manually.
+ * The APK must be signed with the same key as the installed copy, otherwise Android refuses to update; that's checked before the installer opens so the user gets a clear message.
  */
 class SelfUpdate(private val context: Context) {
 
@@ -63,7 +63,7 @@ class SelfUpdate(private val context: Context) {
             .maxWithOrNull { a, b -> compare(a.version, b.version) }
     }
 
-    /** Download (with proxies), verify, check the signature, then open the system installer. */
+    /** Download, verify, check the signature, then open the system installer. */
     suspend fun install(release: Release, onProgress: (progress: Float, bytes: Long) -> Unit) {
         val self = CatalogApp(
             id = "tandroid-update",
@@ -74,9 +74,11 @@ class SelfUpdate(private val context: Context) {
             colors = emptyList(),
         )
         var lastError: Throwable? = null
-        for (candidate in downloadCandidates(release.url)) {
+        // Direct link only: if GitHub's file server doesn't answer within 15 s, fail fast and let
+        // the prompt show the manual-install hint (public proxies proved too unreliable to wait for).
+        for (candidate in listOf(release.url)) {
             try {
-                val file = store.download(self, candidate, onProgress)
+                val file = store.download(self, candidate, firstByteTimeoutMs = 15_000, onProgress = onProgress)
                 if (!store.verify(file, release.sha256)) error("安装包校验失败")
                 if (!sameSigner(file)) {
                     error("新版本的签名和已安装的不同，无法直接覆盖安装。请用同一台电脑打包，或先卸载再安装")

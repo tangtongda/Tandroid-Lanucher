@@ -253,7 +253,12 @@ class AppStoreRepository(private val context: Context) {
     }
 
     /** Download with the system DownloadManager into app-private storage, reporting 0..1 progress. */
-    suspend fun download(app: CatalogApp, url: String, onProgress: (progress: Float, bytes: Long) -> Unit): File = withContext(Dispatchers.IO) {
+    suspend fun download(
+        app: CatalogApp,
+        url: String,
+        firstByteTimeoutMs: Long = 30_000,
+        onProgress: (progress: Float, bytes: Long) -> Unit,
+    ): File = withContext(Dispatchers.IO) {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: error("没有可用的存储空间")
         val file = File(dir, "${app.id}.apk").apply { delete() }
         val dm = context.getSystemService(DownloadManager::class.java)
@@ -285,7 +290,7 @@ class AppStoreRepository(private val context: Context) {
                         DownloadManager.STATUS_FAILED -> error("下载失败，请检查网络")
                     }
                     val stalledFor = System.currentTimeMillis() - lastChange
-                    if (stalledFor > (if (done == 0L) 30_000 else 60_000)) error("下载超时，网络太慢或无法连接")
+                    if (stalledFor > (if (done == 0L) firstByteTimeoutMs else 60_000)) error("下载超时，网络太慢或无法连接")
                 }
                 delay(500)
             }

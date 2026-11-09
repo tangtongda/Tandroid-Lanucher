@@ -145,7 +145,22 @@ fun UpdatePrompt() {
                     }
                     UpdateStep.Installing -> Text("正在打开安装程序，按「更新」确认即可", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
                     UpdateStep.NeedsPermission -> Text("请允许「安装未知应用」，返回后再按一次「立即更新」", color = Color(0xFFFFD27F), fontSize = 13.sp)
-                    is UpdateStep.Failed -> Text(s.message, color = Color(0xFFFF8A80), fontSize = 13.sp)
+                    is UpdateStep.Failed -> {
+                        Text(s.message, color = Color(0xFFFF8A80), fontSize = 13.sp)
+                        // GitHub's file servers are often unreachable from mainland networks without a
+                        // VPN; offer the manual route instead of retrying forever.
+                        if (!s.message.startsWith("新版本的签名")) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "电视连不上 GitHub 的下载服务器时，可以手动安装：在电脑上打开\n" +
+                                    "github.com/tangtongda/Tandroid-Lanucher/releases\n" +
+                                    "下载 Tandroid-Launcher-${current.version}.apk，用 U 盘或 adb 装到电视上，设置不会丢。",
+                                color = Color.White.copy(alpha = 0.75f),
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp,
+                            )
+                        }
+                    }
                     UpdateStep.Offer -> Unit
                 }
                 Spacer(Modifier.height(18.dp))
