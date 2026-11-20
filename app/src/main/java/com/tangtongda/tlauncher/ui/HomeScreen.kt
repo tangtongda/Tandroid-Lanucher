@@ -213,8 +213,10 @@ fun HomeRoute(vm: HomeViewModel = viewModel()) {
         onAppClick = vm::launch,
         shortcuts = shortcuts,
         onShortcutClick = { shortcut ->
-            if (shortcut.action == com.tangtongda.tlauncher.data.ACTION_LAUNCHER_SETTINGS) showSettings = true
-            else vm.launchShortcut(shortcut)
+            when (shortcut.action) {
+                com.tangtongda.tlauncher.data.ACTION_LAUNCHER_SETTINGS -> showSettings = true
+                else -> vm.launchShortcut(shortcut)
+            }
         },
         backdrops = backdrops,
         order = order,
@@ -238,12 +240,15 @@ fun HomeRoute(vm: HomeViewModel = viewModel()) {
     )
     if (showSettings) LauncherSettingsDialog(onDismiss = { showSettings = false })
     hdmiPrompt?.takeIf { !DefaultHome.promptVisible && !showSettings }?.let { input ->
-        HdmiPromptDialog(input = input, onSwitch = vm::switchToHdmi, onDismiss = vm::dismissHdmi)
+        HdmiPromptDialog(input = input, onSwitch = vm::switchToHdmi, onDismiss = vm::dismissHdmi, onIgnore = vm::ignoreHdmi)
     }
 }
 
 /** Top navigation, modelled on Google TV's bar (minus Library). "直播" is an action, not a page. */
 enum class HomeTab { Home, Media, Apps }
+
+/** Second-level menu on the App tab. */
+enum class AppsPage(val label: String) { All("全部应用"), Store("推荐应用"), Usb("从 USB 设备安装") }
 
 // ---------- Stateless UI (used by previews too) ----------
 
@@ -275,6 +280,8 @@ fun HomeContent(
     now: LocalDateTime? = null, // fixed time for previews
 ) {
     var tab by remember { mutableStateOf(HomeTab.Home) }
+    var appsPage by remember { mutableStateOf(AppsPage.All) } // App tab's second-level menu
+    val appsPageFocus = remember { AppsPage.entries.associateWith { FocusRequester() } }
     var menuFor by remember { mutableStateOf<Tile?>(null) } // long-press menu target
     var showWeather by remember { mutableStateOf(false) }
     var showFolder by remember { mutableStateOf(false) }
@@ -498,27 +505,54 @@ fun HomeContent(
                     return@Column
                 }
                 if (tab == HomeTab.Apps) {
-                    // All apps: plain grid under the nav bar, same tiles, same move mode.
-                    Spacer(Modifier.height(NavBarHeight + 28.dp))
-                    Text(
-                        "全部应用",
-                        color = TextPrimary,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = SideMargin),
-                    )
-                    rows.forEach { row ->
-                        Spacer(Modifier.height(24.dp))
-                        TileRow(row = row, grid = grid, modifier = Modifier.padding(horizontal = SideMargin))
+                    Spacer(Modifier.height(NavBarHeight + 24.dp))
+                    // Second-level menu: 全部应用 / 推荐应用 / 从 USB 设备安装. Like the top bar,
+                    // the page switches as focus lands on an item.
+                    Row(
+                        Modifier
+                            .padding(horizontal = SideMargin)
+                            .focusProperties { enter = { appsPageFocus.getValue(appsPage) } }
+                            .focusGroup(),
+                    ) {
+                        AppsPage.entries.forEach { page ->
+                            NavTab(
+                                page.label,
+                                Modifier.focusRequester(appsPageFocus.getValue(page)),
+                                selected = appsPage == page,
+                                onFocused = { appsPage = page },
+                                onClick = { appsPage = page },
+                            )
+                        }
                     }
-                    if (catalog.isNotEmpty()) {
-                        Spacer(Modifier.height(36.dp))
-                        StoreSection(
-                            apps = catalog,
-                            states = storeState,
-                            onInstall = onInstallCatalog,
-                            modifier = Modifier.padding(horizontal = SideMargin),
-                        )
+                    when (appsPage) {
+                        // All apps: plain grid, same tiles, same move mode.
+                        AppsPage.All -> rows.forEach { row ->
+                            Spacer(Modifier.height(24.dp))
+                            TileRow(row = row, grid = grid, modifier = Modifier.padding(horizontal = SideMargin))
+                        }
+                        AppsPage.Store -> {
+                            Spacer(Modifier.height(24.dp))
+                            if (catalog.isEmpty()) {
+                                Text(
+                                    "推荐的应用都已经装好了",
+                                    color = TextSecondary,
+                                    fontSize = 15.sp,
+                                    modifier = Modifier.padding(horizontal = SideMargin),
+                                )
+                            } else {
+                                StoreSection(
+                                    apps = catalog,
+                                    states = storeState,
+                                    onInstall = onInstallCatalog,
+                                    showTitle = false,
+                                    modifier = Modifier.padding(horizontal = SideMargin),
+                                )
+                            }
+                        }
+                        AppsPage.Usb -> {
+                            Spacer(Modifier.height(24.dp))
+                            UsbInstallPanel(Modifier.padding(horizontal = SideMargin))
+                        }
                     }
                     return@Column
                 }
@@ -583,6 +617,8 @@ fun HomeContent(
             // On the media page: its first button/card, if it has anything focusable.
             val downTarget = if (tab == HomeTab.Media) {
                 if (!mediaPermission || media.any { it.items.isNotEmpty() }) mediaEntry else FocusRequester.Default
+            } else if (tab == HomeTab.Apps) {
+                appsPageFocus.getValue(appsPage)
             } else {
                 tiles.getOrNull(lastFocusedIndex.coerceAtMost(tiles.lastIndex))
                     ?.let { grid.requester(it) } ?: FocusRequester.Default

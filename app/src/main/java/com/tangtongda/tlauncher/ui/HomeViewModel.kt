@@ -75,6 +75,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- HDMI ----------
 
     private val hdmiRepo = HdmiRepository(app)
+    private val hdmiPrefs = com.tangtongda.tlauncher.data.HdmiPrefs(app)
     private val _hdmiPrompt = MutableStateFlow<HdmiInput?>(null)
 
     /** "HDMI 2 已连接，要切换过去吗？" — shown while non-null. */
@@ -85,6 +86,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch {
             hdmiRepo.connections().collect { input ->
+                // Turned off in 设置, or "不再提示" for this input.
+                if (!hdmiPrefs.enabled || input.id in hdmiPrefs.ignored) return@collect
                 // Plugging in can fire several events in a row: ask once per input per 10 s.
                 val now = System.currentTimeMillis()
                 val last = lastHdmi
@@ -126,6 +129,13 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissHdmi() {
         _hdmiPrompt.value = null
+    }
+
+    /** "不再提示": never ask about this input again (undo in 设置 → HDMI 接入提示). */
+    fun ignoreHdmi() {
+        val input = _hdmiPrompt.value ?: return
+        _hdmiPrompt.value = null
+        hdmiPrefs.ignore(input.id)
     }
 
     fun switchToHdmi() {

@@ -126,7 +126,8 @@ private fun MainPage(
 
     Text("Tandroid 设置", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(20.dp))
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // Scrolls when the list is taller than the screen; focus moving down brings rows into view.
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val tv = remember { DefaultHome.isTv(context) }
         SettingsRow(
             title = if (tv) "主页键" else "设为默认桌面",
@@ -139,6 +140,27 @@ private fun MainPage(
             modifier = Modifier.focusRequester(first),
         ) {
             context.startSafely(Intent(if (tv) Settings.ACTION_ACCESSIBILITY_SETTINGS else Settings.ACTION_HOME_SETTINGS))
+        }
+        val hdmi = remember { com.tangtongda.tlauncher.data.HdmiPrefs(context) }
+        var hdmiOn by remember { mutableStateOf(hdmi.enabled) }
+        var hdmiIgnored by remember { mutableStateOf(hdmi.ignored.size) }
+        SettingsRow(
+            title = "HDMI 接入提示",
+            subtitle = if (hdmiOn) "已开启：设备接入时询问是否切换（音响等 ARC 设备不提示）· 按 OK 关闭"
+            else "已关闭 · 按 OK 开启",
+            subtitleColor = if (hdmiOn) Color(0xFF8FE3A8) else Color.White.copy(alpha = 0.6f),
+        ) {
+            hdmiOn = !hdmiOn
+            hdmi.enabled = hdmiOn
+        }
+        if (hdmiIgnored > 0) {
+            SettingsRow(
+                title = "恢复不再提示的设备",
+                subtitle = "已有 $hdmiIgnored 个 HDMI 输入设为不再提示 · 按 OK 恢复",
+            ) {
+                hdmi.clearIgnored()
+                hdmiIgnored = 0
+            }
         }
         SettingsRow(
             title = "检查更新",

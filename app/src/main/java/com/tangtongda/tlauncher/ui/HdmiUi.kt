@@ -45,14 +45,14 @@ import com.tangtongda.tlauncher.data.HdmiInput
  * Back or 取消 dismisses. The view model drops it by itself after 30 s.
  */
 @Composable
-fun HdmiPromptDialog(input: HdmiInput, onSwitch: () -> Unit, onDismiss: () -> Unit) {
+fun HdmiPromptDialog(input: HdmiInput, onSwitch: () -> Unit, onDismiss: () -> Unit, onIgnore: () -> Unit = onDismiss) {
     val switchButton = remember { FocusRequester() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LaunchedEffect(input) { runCatching { switchButton.requestFocus() } }
         Box(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 36.dp), contentAlignment = Alignment.BottomEnd) {
             Column(
                 Modifier
-                    .width(340.dp)
+                    .width(400.dp)
                     .background(Color(0xF21C2028), RoundedCornerShape(22.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(22.dp))
                     .padding(22.dp),
@@ -68,6 +68,7 @@ fun HdmiPromptDialog(input: HdmiInput, onSwitch: () -> Unit, onDismiss: () -> Un
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     DialogButton("切换", primary = true, onClick = onSwitch, modifier = Modifier.focusRequester(switchButton))
                     DialogButton("取消", primary = false, onClick = onDismiss)
+                    DialogButton("不再提示", primary = false, onClick = onIgnore)
                 }
             }
         }

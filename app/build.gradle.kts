@@ -28,8 +28,8 @@ android {
         applicationId = "com.tangtongda.tlauncher"
         minSdk = 29          // Sony A80J: Google TV / Android 10
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.7.1"
+        versionCode = 10
+        versionName = "0.7.2"
 
         // Shown under 设置 → 关于.
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")

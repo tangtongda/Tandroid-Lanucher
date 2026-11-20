@@ -37,10 +37,14 @@ fun StoreSection(
     states: Map<String, StoreState>,
     onInstall: (CatalogApp) -> Unit,
     modifier: Modifier = Modifier,
+    /** False when the 推荐应用 menu item above already names the page. */
+    showTitle: Boolean = true,
 ) {
     Column(modifier) {
-        Text("推荐应用", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(12.dp))
+        if (showTitle) {
+            Text("推荐应用", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+        }
         // One block per category (影视 / 音乐 / 电视), in the order they first appear in the catalog.
         apps.groupBy { it.category }.forEach { (category, group) ->
         Text(category, color = Color.White.copy(alpha = 0.6f), fontSize = 15.sp, fontWeight = FontWeight.Medium)
