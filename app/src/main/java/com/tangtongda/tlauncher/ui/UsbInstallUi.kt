@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -89,7 +90,17 @@ fun UsbInstallPanel(modifier: Modifier = Modifier) {
         }
     }
 
-    val askRuntime = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { reload() }
+    val askRuntime = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            message = null
+        } else {
+            // No dialog came up (denied before with "don't ask again", e.g. from the Media page,
+            // or the TV doesn't show it): send the user to our app's permission page instead.
+            message = "请在打开的页面里进入「权限」，允许「存储」，然后返回"
+            repo.openAppDetails()
+        }
+        reload()
+    }
     // Plugging a drive in or out while the panel is open: scan again.
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
@@ -150,7 +161,12 @@ fun UsbInstallPanel(modifier: Modifier = Modifier) {
             UsbState.NeedsPermission -> {
                 Hint("需要读取 U 盘的权限才能找到安装包。")
                 Spacer(Modifier.height(14.dp))
-                ActionRow("授予权限", "Android 11 及以上会打开「所有文件访问权限」，打开开关后返回", onClick = grant)
+                ActionRow(
+                    "授予权限",
+                    if (Build.VERSION.SDK_INT >= 30) "按 OK 打开「所有文件访问权限」，打开开关后返回"
+                    else "按 OK 允许读取存储；如果没有弹出对话框，会打开应用权限页",
+                    onClick = grant,
+                )
             }
             UsbState.NoDrive -> {
                 Hint("没有检测到 U 盘。插上后会自动刷新，也可以按 OK 重新检测。")

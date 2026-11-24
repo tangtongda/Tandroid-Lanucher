@@ -59,12 +59,24 @@ class UsbApkRepository(private val context: Context) {
         else -> Access.NeedsRuntimePermission
     }
 
+    /** Android 11+: the "all files access" switch for us; falls back to our app-info page. */
     fun openAllFilesAccess() {
         val ownPage = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}"))
         val listPage = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
         for (intent in listOf(ownPage, listPage)) {
             if (runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess) return
         }
+        openAppDetails()
+    }
+
+    /**
+     * Our page in 设置 → 应用 (权限 → 存储). Used when the system won't show the permission dialog
+     * any more (denied earlier with "don't ask again", or a TV that never shows it).
+     */
+    fun openAppDetails() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
     }
 
     /** Mounted removable drives: display name → root folder. */
